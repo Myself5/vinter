@@ -33,13 +33,13 @@ cd ~/vinter
 fs-testing/scripts/run_getting-started.sh
 ```
 
-The script will put results into the directory `results_getting-started`. View
+The script will put results into the directory `results/getting-started`. View
 a short summary of these results with the following commands:
 ```
 vinter_python/report-results.py analyze \
-    results_getting-started/vinter_python/vm_nova/getting-started/test_hello-world
+    results/getting-started/vinter_python/vm_nova/getting-started/test_hello-world
 vinter_python/report-results.py analyze \
-    results_getting-started/vinter_python/vm_pmfs/getting-started/test_hello-world
+    results/getting-started/vinter_python/vm_pmfs/getting-started/test_hello-world
 ```
 
 You can see that Vinter reports a violation of *single final state* for the

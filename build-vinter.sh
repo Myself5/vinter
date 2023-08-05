@@ -7,7 +7,7 @@ cargo build --release
 # link vinter_trace to the Panda plugin directory
 ln -fs release/libvinter_trace.so target/panda_vinter_trace.so
 ln -fsrt panda/build/x86_64-softmmu/panda/plugins/ target/panda_vinter_trace.so 
-# link vinter_trace.py for vinter_trace2img
+# link vinter_trace.py for vinter_trace2img_legacy
 ln -fsrt target/release vinter_rust/vinter_trace/vinter_trace.py
 
 # build fs-dump
