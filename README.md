@@ -70,6 +70,43 @@ apt-get install bc -y --force-yes &&
 
 Information for artifact evaluation is in `artifact-evaluation/README.md`.
 
+## Crash Image Generation and Comparison
+
+Start the virtual machine in a suitable hypervisor. Vinter can optionally run
+its analysis in parallel, so make sure to provide plenty of memory (`-m`) and
+vCPUs (`-smp`). As a rough guideline, provide 2 GB of memory per vCPU. For
+example with QEMU/KVM:
+```
+  qemu-system-x86_64 -m 64G -smp 32 -display none -accel kvm -serial mon:stdio \
+  -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::2222-:22 vinter.qcow2
+```
+
+Connect to the virtual machine via SSH. The password for the users vinter and
+root is "vinter". Note that the SSH server does not allow direct login as root,
+use `su` instead. It is also possible to interact with the VM via the serial
+console, but we strongly recommend SSH to avoid glitches.
+```
+ssh -p 2222 vinter@localhost
+```
+
+Inside the VM, you can find Vinter in `/home/vinter/vinter`. To verify that
+Vinter is set up correctly, we provide a script that runs Vinter (both Python
+and Rust versions) with one test case on each kernel. This will take around
+five minutes to complete.
+```
+cd ~/vinter
+fs-testing/scripts/run_rust_test.sh
+```
+
+The script will put results into the directory `results/rust-test`. View
+a short summary of these results with the following commands:
+```
+vinter_python/report-results.py analyze \
+    results/rust-test/vinter_rust_legacy/vm_nova/test_hello-world
+vinter_python/report-results.py analyze \
+    results/rust-test/vinter_rust_legacy/vm_pmfs/test_hello-world
+```
+
 ## License
 
 Vinter is released under the MIT license, see `LICENSE` for details.
