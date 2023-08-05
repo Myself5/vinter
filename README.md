@@ -59,8 +59,11 @@ fs-testing/linux/build-kernel.sh nova
 git clone https://github.com/linux-pmfs/pmfs fs-testing/linux/pmfs
 # Note: Building PMFS requires gcc4, build from a suitable container. For example:
 podman run --rm -v"$PWD/fs-testing/linux:/mnt" docker.io/library/gcc:4 \
-	sh -c 'apt-get update && apt-get install bc && /mnt/build-kernel.sh pmfs'
-
+sh -c 'echo "deb [check-valid-until=no] http://archive.debian.org/debian jessie-backports main\n
+deb [check-valid-until=no] http://archive.debian.org/debian jessie main" > /etc/apt/sources.list &&
+apt-get -o Acquire::Check-Valid-Until=false update &&
+apt-get install bc -y --force-yes && 
+/mnt/build-kernel.sh pmfs'
 ```
 
 ## Artifact Evaluation
