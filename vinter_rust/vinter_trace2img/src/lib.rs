@@ -22,6 +22,9 @@ pub use pmem::{LineGranularity, X86PersistentMemory};
 
 pub mod config;
 
+mod fptree;
+pub use fptree::{FPTraceAddr, FailurePointTree};
+
 pub struct MemoryReplayer {
     pub mem: Rc<RefCell<X86PersistentMemory>>,
 }
