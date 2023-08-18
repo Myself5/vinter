@@ -46,7 +46,15 @@ enum Commands {
         /// Path to output directory. Default "."
         #[clap(long, parse(from_os_str))]
         output_dir: Option<PathBuf>,
+        #[clap(short, long)]
+        /// Generator heuristic used to generate crash images. Options: (n)one, (d)efault, (f)pt.
+        generator: Option<String>,
     },
+}
+
+enum CrashImageGenerators {
+    Heuristic(bool), // true/false to define if the Heuristic is used
+    FailurePointTree,
 }
 
 fn main() -> Result<()> {
@@ -80,12 +88,45 @@ fn main() -> Result<()> {
             vm_config,
             test_config,
             output_dir,
+            generator,
         } => {
-            let mut gen = HeuristicCrashImageGenerator::new(
-                vm_config,
-                test_config,
-                output_dir.unwrap_or(PathBuf::from(".")),
-            )?;
+            let mut gen_config = CrashImageGenerators::Heuristic(true);
+            if let Some(gen) = generator {
+                match &gen[..] {
+                    "n"|"none" => {
+                        gen_config = CrashImageGenerators::Heuristic(false);
+                    }
+                    "d"|"default" => {
+                        gen_config = CrashImageGenerators::Heuristic(true);
+                    }
+                    "f"|"fpt" => {
+                        gen_config = CrashImageGenerators::FailurePointTree;
+                    }
+                    _ => {
+                        println!("Invalid generator specified. Supported options: (n)one, (d)efault, (f)pt");
+                        return Ok(());
+                    }
+                }
+            }
+
+            let mut gen;
+
+            match gen_config {
+                CrashImageGenerators::Heuristic(use_heuristic) => {
+                    gen = HeuristicCrashImageGenerator::new(
+                        vm_config,
+                        test_config,
+                        output_dir.unwrap_or(PathBuf::from(".")),
+                        use_heuristic,
+                    )?;
+                }
+                CrashImageGenerators::FailurePointTree => {
+                    // Implement Failure Point Tree generation
+                    println!("TODO");
+                    return Ok(());
+                }
+            }
+
             println!("Tracing command...");
             gen.trace_pre_failure()
                 .context("pre-failure tracing failed")?;

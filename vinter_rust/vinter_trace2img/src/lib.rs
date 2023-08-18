@@ -222,14 +222,13 @@ const MAX_UNPERSISTED_SUBSETS_LOG2: usize = 4;
 /// writes to the same line. Note that the maximum number of generated crash images at one fence is
 /// thus `MAX_UNPERSISTED_SUBSETS * MAX_PARTIAL_FLUSHES_COUNT`.
 const MAX_PARTIAL_FLUSHES_COUNT: usize = 20;
-/// Use heuristic based on read lines or consider all stores?
-const USE_HEURISTIC: bool = true;
 
 pub struct HeuristicCrashImageGenerator {
     vm_config_path: PathBuf,
     vm_config: config::Config,
     test_config: config::Test,
     output_dir: PathBuf,
+    use_heuristic: bool,
     log: File,
     rng: fastrand::Rng,
     /// Generated crash images, indexed by their hash.
@@ -243,6 +242,7 @@ impl HeuristicCrashImageGenerator {
         vm_config_path: PathBuf,
         test_config_path: PathBuf,
         mut output_dir: PathBuf,
+        use_heuristic: bool,
     ) -> Result<Self> {
         let vm_config: config::Config = {
             let f = File::open(&vm_config_path).context("could not open VM config file")?;
@@ -301,6 +301,7 @@ impl HeuristicCrashImageGenerator {
             vm_config,
             test_config,
             output_dir,
+            use_heuristic,
             log,
             rng: fastrand::Rng::with_seed(1633634632),
             crash_images: HashMap::new(),
@@ -509,7 +510,7 @@ impl HeuristicCrashImageGenerator {
         if let HeuristicState::NotConsidered = fully_persisted_img.heuristic {
             let line_granularity: usize = mem.line_granularity().into();
 
-            let unpersisted_reads_lines: Vec<usize> = if USE_HEURISTIC {
+            let unpersisted_reads_lines: Vec<usize> = if self.use_heuristic {
                 let hash = fully_persisted_img.hash;
                 let mut success = false;
                 // trace2img.py tracks these only for statistic purposes
