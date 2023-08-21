@@ -5,6 +5,7 @@ script=$0
 scriptdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 base=$scriptdir/../..
 results=results/rust-new-test
+flags=${1-default}
 
 rm -rf "$results"
 mkdir -p "$results"/vinter_rust
@@ -15,6 +16,6 @@ vms=("vm_nova")
 # Analysis with vinter_rust using the new crash image generator
 for vm in "${vms[@]}"; do
   echo "Running vinter_rust with test $test on $vm..."
-  "$base/target/release/vinter_trace2img" analyze --output-dir "$results/vinter_rust" \
+  "$base/target/release/vinter_trace2img" analyze -g${flags} --output-dir "$results/vinter_rust" \
     "$scriptdir/$vm.yaml" "$scriptdir/$test.yaml"
 done
