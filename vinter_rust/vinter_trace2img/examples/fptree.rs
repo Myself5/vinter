@@ -24,7 +24,7 @@ fn main() {
     FailurePointTree::mark_visited(&mut tree, leaf);
     FailurePointTree::print(&tree);
 
-    println!("\n\nMark path {:#?} as visted:\n", &t7);
+    println!("\n\nMark path {:?} as visted:\n", &t7);
     let leaf = FailurePointTree::get_by_addrs(&mut tree, &t7, t7.len());
     FailurePointTree::mark_visited(&mut tree, leaf);
     FailurePointTree::print(&tree);
@@ -44,5 +44,5 @@ fn main() {
             "unvisted"
         };
     };
-    println!("Path to {} leaf with addr {:#?}: {:#?}", visited, leaf_addr, &path);
+    println!("Path to {} leaf with addr {:?}: {:?}", visited, leaf_addr, &path);
 }
