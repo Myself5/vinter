@@ -1,6 +1,4 @@
-use crate::CrashImageHash;
 use std::ptr::NonNull;
-
 type FPTraceLink = Option<NonNull<FPTraceAddr>>;
 
 #[derive(Debug, Clone)]
@@ -9,22 +7,15 @@ pub struct FPTraceAddr {
     visited: bool,
     children: Vec<FPTraceLink>,
     parent: FPTraceLink,
-    crash_image_hash: Option<CrashImageHash>,
 }
 
 impl FPTraceAddr {
-    pub fn new(
-        addr: usize,
-        children: Vec<FPTraceLink>,
-        parent: FPTraceLink,
-        crash_image_hash: Option<CrashImageHash>,
-    ) -> FPTraceAddr {
+    pub fn new(addr: usize, children: Vec<FPTraceLink>, parent: FPTraceLink) -> FPTraceAddr {
         FPTraceAddr {
             addr,
             visited: false,
             children,
             parent,
-            crash_image_hash,
         }
     }
 
@@ -53,14 +44,14 @@ impl FailurePointTree {
     }
 
     // Returns "Path Found" if the full path is contained and Errors on the last link if not
-    pub fn contains(&self, addr: &[usize], length: usize) -> Result<bool, FPTraceLink> {
+    pub fn contains(&self, addr: &[usize], length: usize) -> Result<&str, FPTraceLink> {
         if unsafe { (*self.root.unwrap().as_ptr()).addr } == addr[0] {
             if length > 1 {
                 if let (_, Some(p)) = self.contains_root(self.root, 1, &addr[1..], length - 1) {
                     return Err(Some(p));
                 }
             }
-            return Ok(true);
+            return Ok("Path found");
         }
 
         // Tree does not share a common root
@@ -88,20 +79,13 @@ impl FailurePointTree {
         (depth, root)
     }
 
-    pub fn add(
-        &mut self,
-        addr: &[usize],
-        length: usize,
-        crash_image_hash: CrashImageHash,
-    ) -> Option<CrashImageHash> {
+    pub fn add(&mut self, addr: &[usize], length: usize) {
         if length <= 0 {
-            return None;
+            return;
         }
         if let Some(root) = self.root {
             if unsafe { (*root.as_ptr()).addr } == addr[0] {
-                return self.add_to_parent(Some(root), &addr[1..], length - 1, crash_image_hash);
-            } else {
-                return None;
+                self.add_to_parent(Some(root), &addr[1..], length - 1);
             } // Otherwise there is no common root -> Something is wrong
         } else {
             // Create our new root
@@ -111,58 +95,40 @@ impl FailurePointTree {
                     addr[0],
                     Vec::new(),
                     None,
-                    None,
                 ))));
             } // unsafe
             self.root = Some(new_entry);
             self.size += 1;
-            return self.add_to_parent(Some(new_entry), &addr[1..], length - 1, crash_image_hash);
+            self.add_to_parent(Some(new_entry), &addr[1..], length - 1);
         }
     }
 
-    fn add_to_parent(
-        &mut self,
-        parent: FPTraceLink,
-        addr: &[usize],
-        length: usize,
-        crash_image_hash: CrashImageHash,
-    ) -> Option<CrashImageHash> {
+    fn add_to_parent(&mut self, parent: FPTraceLink, addr: &[usize], length: usize) {
         if length <= 0 {
-            return None;
+            return;
         }
 
         let next_parent_search = self.contains_root(parent, 1, addr, length);
-        let mut crash_image_to_delete = None;
 
         match next_parent_search {
-            (_, None) => (), //No action needed, the path is already contained
+            (_, None) => return, //No action needed, the path is already contained
             (d, Some(parent)) => {
                 let next_parent;
                 unsafe {
                     next_parent = Some(NonNull::new_unchecked(Box::into_raw(Box::new(
-                        FPTraceAddr::new(addr[d - 1], Vec::new(), Some(parent), None),
+                        FPTraceAddr::new(addr[d - 1], Vec::new(), Some(parent)),
                     ))));
                     (*parent.as_ptr()).children.push(next_parent);
-                    crash_image_to_delete = (*parent.as_ptr()).crash_image_hash;
-                    (*parent.as_ptr()).crash_image_hash = None;
                 } // unsafe
 
                 self.size += 1;
                 if length - d > 0 {
-                    if let Some(hash) =
-                        self.add_to_parent(next_parent, &addr[d..], length - d, crash_image_hash)
-                    {
-                        return Some(hash);
-                    }
+                    self.add_to_parent(next_parent, &addr[d..], length - d);
                 } else {
                     self.leaves += 1;
-                    unsafe {
-                        (*next_parent.unwrap().as_ptr()).crash_image_hash = Some(crash_image_hash);
-                    }
                 }
             }
         }
-        return crash_image_to_delete;
     }
 
     pub fn print(&self) {
@@ -174,17 +140,11 @@ impl FailurePointTree {
 
     fn print_root(&self, parent: FPTraceLink, level: usize) {
         let visited;
-        let has_crash_image;
         let parent_addr;
         let child_vec;
         unsafe {
             visited = if (*parent.unwrap().as_ptr()).visited {
                 "v"
-            } else {
-                "x"
-            };
-            has_crash_image = if let Some(_) = (*parent.unwrap().as_ptr()).crash_image_hash {
-                "i"
             } else {
                 "x"
             };
@@ -194,7 +154,7 @@ impl FailurePointTree {
         for _ in 0..level {
             print!("\t");
         }
-        println!("0x{} {} {}", parent_addr, visited, has_crash_image);
+        println!("0x{} {}", parent_addr, visited);
         for child in child_vec {
             self.print_root(child, level + 1);
         }
