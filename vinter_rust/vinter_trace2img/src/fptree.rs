@@ -44,14 +44,15 @@ impl FailurePointTree {
     }
 
     // Returns "Path Found" if the full path is contained and Errors on the last link if not
-    pub fn contains(&self, addr: &[usize], length: usize) -> Result<&str, FPTraceLink> {
+    // Only used in the example/testing
+    pub fn contains(&self, addr: &[usize], length: usize) -> Result<bool, FPTraceLink> {
         if unsafe { (*self.root.unwrap().as_ptr()).addr } == addr[0] {
             if length > 1 {
                 if let (_, Some(p)) = self.contains_root(self.root, 1, &addr[1..], length - 1) {
                     return Err(Some(p));
                 }
             }
-            return Ok("Path found");
+            return Ok(true);
         }
 
         // Tree does not share a common root
@@ -79,14 +80,17 @@ impl FailurePointTree {
         (depth, root)
     }
 
-    pub fn add(&mut self, addr: &[usize], length: usize) {
+    // Return true if the stack has been added to the tree, false if not or if it has been included before
+    pub fn add(&mut self, addr: &[usize], length: usize) -> bool {
         if length <= 0 {
-            return;
+            return false;
         }
         if let Some(root) = self.root {
             if unsafe { (*root.as_ptr()).addr } == addr[0] {
-                self.add_to_parent(Some(root), &addr[1..], length - 1);
-            } // Otherwise there is no common root -> Something is wrong
+                return self.add_to_parent(Some(root), &addr[1..], length - 1);
+            } else {
+                return false; // Otherwise there is no common root -> Something is wrong
+            }
         } else {
             // Create our new root
             let new_entry;
@@ -99,19 +103,20 @@ impl FailurePointTree {
             } // unsafe
             self.root = Some(new_entry);
             self.size += 1;
-            self.add_to_parent(Some(new_entry), &addr[1..], length - 1);
+            return self.add_to_parent(Some(new_entry), &addr[1..], length - 1);
         }
     }
 
-    fn add_to_parent(&mut self, parent: FPTraceLink, addr: &[usize], length: usize) {
+    // Return true if the stack has been added to the tree, false if not or if it has been included before
+    fn add_to_parent(&mut self, parent: FPTraceLink, addr: &[usize], length: usize) -> bool {
         if length <= 0 {
-            return;
+            return false;
         }
 
         let next_parent_search = self.contains_root(parent, 1, addr, length);
 
         match next_parent_search {
-            (_, None) => return, //No action needed, the path is already contained
+            (_, None) => return false, //No action needed, the path is already contained
             (d, Some(parent)) => {
                 let next_parent;
                 unsafe {
@@ -123,14 +128,16 @@ impl FailurePointTree {
 
                 self.size += 1;
                 if length - d > 0 {
-                    self.add_to_parent(next_parent, &addr[d..], length - d);
+                    return self.add_to_parent(next_parent, &addr[d..], length - d);
                 } else {
                     self.leaves += 1;
+                    return true;
                 }
             }
         }
     }
 
+    // Used in Example/Testing
     pub fn print(&self) {
         self.print_root(self.root, 0);
 
@@ -160,6 +167,7 @@ impl FailurePointTree {
         }
     }
 
+    // Used in Example/Testing
     pub fn search(&self, addr: usize) -> FPTraceLink {
         self.search_root(self.root, addr)
     }
@@ -179,6 +187,7 @@ impl FailurePointTree {
         None
     }
 
+    // Used in Example/Testing
     pub fn get_by_addrs(&self, addr: &[usize], length: usize) -> FPTraceLink {
         let ret = self.get_by_addrs_root(self.root, addr, length);
         if let None = ret {
@@ -203,6 +212,7 @@ impl FailurePointTree {
         None
     }
 
+    // Used in Example/Testing
     pub fn get_path_from_addr(&self, link: FPTraceLink) -> Vec<usize> {
         let mut vec = self.get_path_from_addr_rec(link, Vec::new());
         vec.reverse();
