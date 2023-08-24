@@ -6,8 +6,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 use vinter_trace2img::{
-    HeuristicCrashImageGenerator, LineGranularity, MemoryImage, MemoryImageMmap, MemoryReplayer,
-    X86PersistentMemory,
+    CrashImageGenerator, GenericCrashImageGenerator, LineGranularity, MemoryImage, MemoryImageMmap,
+    MemoryReplayer, X86PersistentMemory,
 };
 
 #[derive(Parser)]
@@ -52,11 +52,6 @@ enum Commands {
     },
 }
 
-enum CrashImageGenerators {
-    Heuristic(bool), // true/false to define if the Heuristic is used
-    FailurePointTree,
-}
-
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -90,17 +85,19 @@ fn main() -> Result<()> {
             output_dir,
             generator,
         } => {
-            let mut gen_config = CrashImageGenerators::Heuristic(true);
+            let mut gen_config = CrashImageGenerator::Heuristic;
+            let mut fences_log_text = "fences";
             if let Some(gen) = generator {
                 match &gen[..] {
-                    "n"|"none" => {
-                        gen_config = CrashImageGenerators::Heuristic(false);
+                    "n" | "none" => {
+                        gen_config = CrashImageGenerator::None;
                     }
-                    "d"|"default" => {
-                        gen_config = CrashImageGenerators::Heuristic(true);
+                    "d" | "default" => {
+                        gen_config = CrashImageGenerator::Heuristic;
                     }
-                    "f"|"fpt" => {
-                        gen_config = CrashImageGenerators::FailurePointTree;
+                    "f" | "fpt" => {
+                        gen_config = CrashImageGenerator::FailurePointTree;
+                        fences_log_text = "fences and flushes";
                     }
                     _ => {
                         println!("Invalid generator specified. Supported options: (n)one, (d)efault, (f)pt");
@@ -109,23 +106,12 @@ fn main() -> Result<()> {
                 }
             }
 
-            let mut gen;
-
-            match gen_config {
-                CrashImageGenerators::Heuristic(use_heuristic) => {
-                    gen = HeuristicCrashImageGenerator::new(
-                        vm_config,
-                        test_config,
-                        output_dir.unwrap_or(PathBuf::from(".")),
-                        use_heuristic,
-                    )?;
-                }
-                CrashImageGenerators::FailurePointTree => {
-                    // Implement Failure Point Tree generation
-                    println!("TODO");
-                    return Ok(());
-                }
-            }
+            let mut gen = GenericCrashImageGenerator::new(
+                vm_config,
+                test_config,
+                output_dir.unwrap_or(PathBuf::from(".")),
+                gen_config,
+            )?;
 
             println!("Tracing command...");
             gen.trace_pre_failure()
@@ -133,8 +119,9 @@ fn main() -> Result<()> {
             println!("Pre-failure trace finished. Replaying trace...");
             let fences_with_writes = gen.replay().context("replay failed")?;
             println!(
-                "Replay finished. {} fences with writes, {} crash images",
+                "Replay finished. {} {} with writes, {} crash images",
                 fences_with_writes,
+                fences_log_text,
                 gen.crash_images.len()
             );
             println!("Extracing semantic states...");

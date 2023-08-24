@@ -96,6 +96,12 @@ impl MemoryReplayer {
     }
 }
 
+pub enum CrashImageGenerator {
+    None,
+    Heuristic,
+    FailurePointTree,
+}
+
 #[derive(Debug, Serialize)]
 pub enum CrashPersistenceType {
     /// We always create an image at a checkpoint, even if there are no writes.
@@ -223,12 +229,13 @@ const MAX_UNPERSISTED_SUBSETS_LOG2: usize = 4;
 /// thus `MAX_UNPERSISTED_SUBSETS * MAX_PARTIAL_FLUSHES_COUNT`.
 const MAX_PARTIAL_FLUSHES_COUNT: usize = 20;
 
-pub struct HeuristicCrashImageGenerator {
+pub struct GenericCrashImageGenerator {
     vm_config_path: PathBuf,
     vm_config: config::Config,
     test_config: config::Test,
     output_dir: PathBuf,
-    use_heuristic: bool,
+    generator_config: CrashImageGenerator,
+    failure_point_tree: FailurePointTree,
     log: File,
     rng: fastrand::Rng,
     /// Generated crash images, indexed by their hash.
@@ -237,12 +244,12 @@ pub struct HeuristicCrashImageGenerator {
     pub semantic_states: HashMap<SemanticStateHash, SemanticState>,
 }
 
-impl HeuristicCrashImageGenerator {
+impl GenericCrashImageGenerator {
     pub fn new(
         vm_config_path: PathBuf,
         test_config_path: PathBuf,
         mut output_dir: PathBuf,
-        use_heuristic: bool,
+        generator_config: CrashImageGenerator,
     ) -> Result<Self> {
         let vm_config: config::Config = {
             let f = File::open(&vm_config_path).context("could not open VM config file")?;
@@ -296,12 +303,13 @@ impl HeuristicCrashImageGenerator {
             bail!("qemu-img failed with status {}", status);
         }
 
-        Ok(HeuristicCrashImageGenerator {
+        Ok(GenericCrashImageGenerator {
             vm_config_path,
             vm_config,
             test_config,
             output_dir,
-            use_heuristic,
+            generator_config,
+            failure_point_tree: FailurePointTree::new(),
             log,
             rng: fastrand::Rng::with_seed(1633634632),
             crash_images: HashMap::new(),
@@ -314,6 +322,11 @@ impl HeuristicCrashImageGenerator {
         let cmd = format!("cat /proc/uptime; cat /proc/uptime; cat /proc/uptime; {prefix} && {suffix} && hypercall success; cat /proc/uptime",
             prefix = self.vm_config.commands.get("trace_cmd_prefix").ok_or_else(|| anyhow!("missing trace_cmd_prefix in VM configuration"))?,
             suffix = self.test_config.trace_cmd_suffix);
+        let metadata_arg = if let CrashImageGenerator::FailurePointTree = self.generator_config {
+            Vec::from(["--metadata", "kernel_stacktrace"])
+        } else {
+            Vec::new()
+        };
         let status = trace_command()?
             .arg("--qcow")
             .arg(self.output_dir.join("img.qcow2"))
@@ -325,6 +338,7 @@ impl HeuristicCrashImageGenerator {
             .arg("--save-pmem")
             .arg(self.output_dir.join("final.img"))
             .arg(&self.vm_config_path)
+            .args(metadata_arg)
             .stderr(self.log.try_clone()?)
             .stdout(self.log.try_clone()?)
             .status()?;
@@ -456,6 +470,7 @@ impl HeuristicCrashImageGenerator {
         fence_id: usize,
         mem: &X86PersistentMemory,
         checkpoint_id: isize,
+        callstack_option: Option<&[usize]>,
     ) -> Result<()> {
         use std::collections::hash_map::Entry;
         macro_rules! image_entry {
@@ -471,6 +486,21 @@ impl HeuristicCrashImageGenerator {
                     e => e.or_insert_with(|| CrashImage::new(hash.clone())),
                 }
             }};
+        }
+
+        if let CrashImageGenerator::FailurePointTree = self.generator_config {
+            match callstack_option {
+                Some(callstack) => {
+                    // give the stack a common root (0)
+                    let mut vec = Vec::from([0]);
+                    vec.extend_from_slice(callstack);
+                    if !FailurePointTree::add(&mut self.failure_point_tree, &vec, vec.len()) {
+                        // This specific callstack is already included, skip
+                        return Ok(());
+                    }
+                }
+                _ => (), // "Hypercalls" provide a "None" callstack, always insert them
+            }
         }
 
         let no_writes = mem.unpersisted_content.is_empty();
@@ -506,170 +536,186 @@ impl HeuristicCrashImageGenerator {
         });
         let fully_persisted_img_hash = fully_persisted_img.hash;
 
-        // 3. with subsets chosen randomly or by heuristic
-        if let HeuristicState::NotConsidered = fully_persisted_img.heuristic {
-            let line_granularity: usize = mem.line_granularity().into();
+        match self.generator_config {
+            CrashImageGenerator::Heuristic | CrashImageGenerator::None => {
+                // 3. with subsets chosen randomly or by heuristic
+                if let HeuristicState::NotConsidered = fully_persisted_img.heuristic {
+                    let line_granularity: usize = mem.line_granularity().into();
 
-            let unpersisted_reads_lines: Vec<usize> = if self.use_heuristic {
-                let hash = fully_persisted_img.hash;
-                let mut success = false;
-                // trace2img.py tracks these only for statistic purposes
-                // let mut unpersisted_reads: HashSet<(usize, usize)> = HashSet::new();
-                let mut unpersisted_reads_lines: HashSet<usize> = HashSet::new();
-                let trace_path = self
-                    .trace_recovery(&hash)
-                    .context("recovery trace failed")?;
-                let trace_file =
-                    File::open(trace_path).context("could not open recovery trace file")?;
-                for entry in trace::parse_trace_file_bin(BufReader::new(trace_file)) {
-                    match entry? {
-                        TraceEntry::Hypercall { action, .. } if action == "success" => {
-                            success = true;
-                        }
-                        TraceEntry::Read { address, size, .. } => {
-                            let min_line_number = address / line_granularity;
-                            let max_line_number = (address + size - 1) / line_granularity;
-                            for line_number in min_line_number..=max_line_number {
-                                if let Some(line) = mem.unpersisted_content.get(&line_number) {
-                                    if line.overlaps_access(address, size) {
-                                        // unpersisted_reads.insert((address, size));
-                                        unpersisted_reads_lines.insert(line_number);
+                    let unpersisted_reads_lines: Vec<usize> =
+                        if let CrashImageGenerator::Heuristic = self.generator_config {
+                            let hash = fully_persisted_img.hash;
+                            let mut success = false;
+                            // trace2img.py tracks these only for statistic purposes
+                            // let mut unpersisted_reads: HashSet<(usize, usize)> = HashSet::new();
+                            let mut unpersisted_reads_lines: HashSet<usize> = HashSet::new();
+                            let trace_path = self
+                                .trace_recovery(&hash)
+                                .context("recovery trace failed")?;
+                            let trace_file = File::open(trace_path)
+                                .context("could not open recovery trace file")?;
+                            for entry in trace::parse_trace_file_bin(BufReader::new(trace_file)) {
+                                match entry? {
+                                    TraceEntry::Hypercall { action, .. } if action == "success" => {
+                                        success = true;
                                     }
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                if !success {
-                    // Ignore errors here, state extraction will most likely also fail later on.
-                    println!("Recovery for crash image {:?} failed", hash);
-                }
-                // unwrap: will never panic since we inserted the image above.
-                self.crash_images
-                    .get_mut(&fully_persisted_img_hash)
-                    .unwrap()
-                    .heuristic = HeuristicState::HeuristicApplied {
-                    heuristic_images: Vec::new(),
-                    modified_lines: mem.unpersisted_content.len(),
-                    read_lines: unpersisted_reads_lines.len(),
-                };
-
-                unpersisted_reads_lines.drain().collect()
-            } else {
-                // Without heuristic, consider all modified lines.
-                fully_persisted_img.heuristic = HeuristicState::AllConsidered {
-                    modified_lines: mem.unpersisted_content.len(),
-                };
-                mem.unpersisted_content.keys().copied().collect()
-            };
-            // Do we have any unpersisted reads?
-            if !unpersisted_reads_lines.is_empty() {
-                let mut heuristic_images = Vec::new();
-                let random_subsets: Vec<Vec<usize>> =
-                    if unpersisted_reads_lines.len() <= MAX_UNPERSISTED_SUBSETS_LOG2 {
-                        // Skip the empty set in the powerset.
-                        unpersisted_reads_lines
-                            .iter()
-                            .copied()
-                            .powerset()
-                            .skip(1)
-                            .collect()
-                    } else {
-                        set::random_subsets(&mut self.rng, &unpersisted_reads_lines)
-                            .filter(|vec| !vec.is_empty())
-                            .take(MAX_UNPERSISTED_SUBSETS)
-                            .collect()
-                    };
-                for random_lines in random_subsets {
-                    let partial_flushes_count = random_lines
-                        .iter()
-                        .map(|line_number| mem.unpersisted_content[line_number].all_writes().len())
-                        .fold(0, |acc, x| acc * x);
-                    let line_partial_writes: Vec<Vec<usize>> = random_lines
-                        .iter()
-                        .map(|line_number| {
-                            let writes_count =
-                                mem.unpersisted_content[line_number].all_writes().len();
-                            if partial_flushes_count > MAX_PARTIAL_FLUSHES_COUNT {
-                                if writes_count <= 1 {
-                                    vec![writes_count]
-                                } else {
-                                    vec![writes_count, self.rng.usize(1..writes_count)]
-                                }
-                            } else {
-                                (1..=writes_count).collect()
-                            }
-                        })
-                        .collect();
-                    for partial_write_indices in
-                        line_partial_writes.iter().multi_cartesian_product()
-                    {
-                        let mut subset_persisted_mem = mem.try_clone()?;
-                        for (line_number, flush_writes_limit) in random_lines
-                            .iter()
-                            .copied()
-                            .zip(partial_write_indices.iter().copied())
-                        {
-                            subset_persisted_mem
-                                .clwb(line_number * line_granularity, Some(*flush_writes_limit));
-                            subset_persisted_mem.fence_line(line_number);
-                        }
-                        let entry = image_entry!(&subset_persisted_mem);
-                        entry.originating_crashes.push(CrashMetadata {
-                            fence_id,
-                            persistence_type: CrashPersistenceType::StrictSubsetPersisted {
-                                strict_subset_lines: random_lines.clone(),
-                                partial_write_indices: partial_write_indices
-                                    .iter()
-                                    .map(|&x| *x)
-                                    .collect(),
-                                // Dirty lines are all lines that are not (fully) persisted in this image.
-                                // First, all lines that are not in random_lines at all.
-                                dirty_lines: mem
-                                    .unpersisted_content
-                                    .keys()
-                                    .copied()
-                                    .collect::<HashSet<_>>()
-                                    .difference(&random_lines.iter().copied().collect())
-                                    .copied()
-                                    .collect::<HashSet<_>>()
-                                    // Then, all lines that are partially included (i.e., not with all writes).
-                                    .union(
-                                        &random_lines
-                                            .iter()
-                                            .zip(partial_write_indices.iter().copied())
-                                            .filter_map(|(line, &writes_limit)| {
-                                                if mem.unpersisted_content[line].all_writes().len()
-                                                    > writes_limit
-                                                {
-                                                    Some(*line)
-                                                } else {
-                                                    None
+                                    TraceEntry::Read { address, size, .. } => {
+                                        let min_line_number = address / line_granularity;
+                                        let max_line_number =
+                                            (address + size - 1) / line_granularity;
+                                        for line_number in min_line_number..=max_line_number {
+                                            if let Some(line) =
+                                                mem.unpersisted_content.get(&line_number)
+                                            {
+                                                if line.overlaps_access(address, size) {
+                                                    // unpersisted_reads.insert((address, size));
+                                                    unpersisted_reads_lines.insert(line_number);
                                                 }
-                                            })
-                                            .collect(),
-                                    )
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            if !success {
+                                // Ignore errors here, state extraction will most likely also fail later on.
+                                println!("Recovery for crash image {:?} failed", hash);
+                            }
+                            // unwrap: will never panic since we inserted the image above.
+                            self.crash_images
+                                .get_mut(&fully_persisted_img_hash)
+                                .unwrap()
+                                .heuristic = HeuristicState::HeuristicApplied {
+                                heuristic_images: Vec::new(),
+                                modified_lines: mem.unpersisted_content.len(),
+                                read_lines: unpersisted_reads_lines.len(),
+                            };
+
+                            unpersisted_reads_lines.drain().collect()
+                        } else {
+                            // Without heuristic, consider all modified lines.
+                            fully_persisted_img.heuristic = HeuristicState::AllConsidered {
+                                modified_lines: mem.unpersisted_content.len(),
+                            };
+                            mem.unpersisted_content.keys().copied().collect()
+                        };
+                    // Do we have any unpersisted reads?
+                    if !unpersisted_reads_lines.is_empty() {
+                        let mut heuristic_images = Vec::new();
+                        let random_subsets: Vec<Vec<usize>> =
+                            if unpersisted_reads_lines.len() <= MAX_UNPERSISTED_SUBSETS_LOG2 {
+                                // Skip the empty set in the powerset.
+                                unpersisted_reads_lines
+                                    .iter()
                                     .copied()
-                                    .collect(),
-                            },
-                            checkpoint_id,
-                        });
-                        heuristic_images.push(entry.hash);
+                                    .powerset()
+                                    .skip(1)
+                                    .collect()
+                            } else {
+                                set::random_subsets(&mut self.rng, &unpersisted_reads_lines)
+                                    .filter(|vec| !vec.is_empty())
+                                    .take(MAX_UNPERSISTED_SUBSETS)
+                                    .collect()
+                            };
+                        for random_lines in random_subsets {
+                            let partial_flushes_count = random_lines
+                                .iter()
+                                .map(|line_number| {
+                                    mem.unpersisted_content[line_number].all_writes().len()
+                                })
+                                .fold(0, |acc, x| acc * x);
+                            let line_partial_writes: Vec<Vec<usize>> = random_lines
+                                .iter()
+                                .map(|line_number| {
+                                    let writes_count =
+                                        mem.unpersisted_content[line_number].all_writes().len();
+                                    if partial_flushes_count > MAX_PARTIAL_FLUSHES_COUNT {
+                                        if writes_count <= 1 {
+                                            vec![writes_count]
+                                        } else {
+                                            vec![writes_count, self.rng.usize(1..writes_count)]
+                                        }
+                                    } else {
+                                        (1..=writes_count).collect()
+                                    }
+                                })
+                                .collect();
+                            for partial_write_indices in
+                                line_partial_writes.iter().multi_cartesian_product()
+                            {
+                                let mut subset_persisted_mem = mem.try_clone()?;
+                                for (line_number, flush_writes_limit) in random_lines
+                                    .iter()
+                                    .copied()
+                                    .zip(partial_write_indices.iter().copied())
+                                {
+                                    subset_persisted_mem.clwb(
+                                        line_number * line_granularity,
+                                        Some(*flush_writes_limit),
+                                    );
+                                    subset_persisted_mem.fence_line(line_number);
+                                }
+                                let entry = image_entry!(&subset_persisted_mem);
+                                entry.originating_crashes.push(CrashMetadata {
+                                    fence_id,
+                                    persistence_type: CrashPersistenceType::StrictSubsetPersisted {
+                                        strict_subset_lines: random_lines.clone(),
+                                        partial_write_indices: partial_write_indices
+                                            .iter()
+                                            .map(|&x| *x)
+                                            .collect(),
+                                        // Dirty lines are all lines that are not (fully) persisted in this image.
+                                        // First, all lines that are not in random_lines at all.
+                                        dirty_lines: mem
+                                            .unpersisted_content
+                                            .keys()
+                                            .copied()
+                                            .collect::<HashSet<_>>()
+                                            .difference(&random_lines.iter().copied().collect())
+                                            .copied()
+                                            .collect::<HashSet<_>>()
+                                            // Then, all lines that are partially included (i.e., not with all writes).
+                                            .union(
+                                                &random_lines
+                                                    .iter()
+                                                    .zip(partial_write_indices.iter().copied())
+                                                    .filter_map(|(line, &writes_limit)| {
+                                                        if mem.unpersisted_content[line]
+                                                            .all_writes()
+                                                            .len()
+                                                            > writes_limit
+                                                        {
+                                                            Some(*line)
+                                                        } else {
+                                                            None
+                                                        }
+                                                    })
+                                                    .collect(),
+                                            )
+                                            .copied()
+                                            .collect(),
+                                    },
+                                    checkpoint_id,
+                                });
+                                heuristic_images.push(entry.hash);
+                            }
+                        }
+                        if let HeuristicState::HeuristicApplied {
+                            heuristic_images: imgs,
+                            ..
+                        } = &mut self
+                            .crash_images
+                            .get_mut(&fully_persisted_img_hash)
+                            .unwrap()
+                            .heuristic
+                        {
+                            std::mem::swap(&mut heuristic_images, imgs);
+                        }
                     }
-                }
-                if let HeuristicState::HeuristicApplied {
-                    heuristic_images: imgs,
-                    ..
-                } = &mut self
-                    .crash_images
-                    .get_mut(&fully_persisted_img_hash)
-                    .unwrap()
-                    .heuristic
-                {
-                    std::mem::swap(&mut heuristic_images, imgs);
                 }
             }
+            // Failure Point Tree handling has been done before, so there's nothing to do here
+            _ => (),
         }
         Ok(())
     }
@@ -679,7 +725,7 @@ impl HeuristicCrashImageGenerator {
         use std::collections::hash_map::Entry;
 
         let mut current_writes = false;
-        let mut fences_with_writes: usize = 0;
+        let mut fences_or_flushes_with_writes: usize = 0;
         let mut last_hypercall_checkpoint: isize = -1;
         let mut pre_failure_success = false;
         let mut checkpoint_ids: HashMap<isize, usize> = HashMap::new();
@@ -704,17 +750,34 @@ impl HeuristicCrashImageGenerator {
         // grab a reference to the memory so that we can access it while processing the trace
         let replayer_mem = replayer.mem.clone();
         let trace_file = File::open(self.trace_path()).context("could not open trace file")?;
+
         for entry in replayer.process_trace(BufReader::new(trace_file)) {
             match entry? {
-                TraceEntry::Fence { id, .. } => {
+                // Only account for flushes when using the FPT
+                TraceEntry::Flush { id, metadata, .. }
+                    if matches!(self.generator_config, CrashImageGenerator::FailurePointTree) =>
+                {
                     if current_writes && within_checkpoint_range(last_hypercall_checkpoint) {
                         self.insert_crash_image(
                             id,
                             &replayer_mem.borrow(),
                             last_hypercall_checkpoint,
+                            Some(&metadata.kernel_stacktrace),
                         )?;
                         current_writes = false;
-                        fences_with_writes += 1;
+                        fences_or_flushes_with_writes += 1;
+                    }
+                }
+                TraceEntry::Fence { id, metadata, .. } => {
+                    if current_writes && within_checkpoint_range(last_hypercall_checkpoint) {
+                        self.insert_crash_image(
+                            id,
+                            &replayer_mem.borrow(),
+                            last_hypercall_checkpoint,
+                            Some(&metadata.kernel_stacktrace),
+                        )?;
+                        current_writes = false;
+                        fences_or_flushes_with_writes += 1;
                     }
                 }
                 TraceEntry::Write { .. } => {
@@ -743,6 +806,7 @@ impl HeuristicCrashImageGenerator {
                                 id,
                                 &replayer_mem.borrow(),
                                 last_hypercall_checkpoint,
+                                None,
                             )?;
                         }
                     }
@@ -762,7 +826,7 @@ impl HeuristicCrashImageGenerator {
         serde_yaml::to_writer(&index_file, &self.crash_images)
             .context("failed writing crash_images/index.yaml")?;
 
-        Ok(fences_with_writes)
+        Ok(fences_or_flushes_with_writes)
     }
 
     /// Extract the semantic state of each crash image.
