@@ -199,7 +199,7 @@ fn metadata(cpu: &mut CPUState, what: MetadataWhat) -> Metadata {
                 break;
             }
             fp = u64::from_le_bytes(buf[0..8].try_into().unwrap());
-            st.push(u64::from_le_bytes(buf[8..16].try_into().unwrap()));
+            st.push(usize::from_le_bytes(buf[8..16].try_into().unwrap()));
         }
         m.kernel_stacktrace = st;
     }
