@@ -19,9 +19,7 @@ Short overview over the main components of Vinter:
   improved performance and to provide a clean base for future extensions.
   * `vinter_trace/`: The "Tracer" component of Vinter.
   * `vinter_trace2img/`: The "Crash Image Generator" and "Tester" components
-    of Vinter, frozen at Runs the full testing pipeline.
-  * `vinter_trace2img_legacy/`: The "Crash Image Generator" and "Tester" components
-    of Vinter, frozen at commit `1328bc9b57e17dcd96bf1320678f99230b2c9dfa` for comparison. Runs the full testing pipeline.
+    of Vinter. Runs the full testing pipeline.
 * `fs-testing/`: Everything related to the analysis of file systems.
   * `scripts/`: Helper scripts, VM definitions, and test case definitions.
   * `initramfs/`: Busybox-based userspace of the test VMs.
