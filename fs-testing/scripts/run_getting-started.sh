@@ -22,6 +22,6 @@ done
 # Analysis with vinter_rust
 for vm in "${vms[@]}"; do
   echo "Running vinter_rust with test $test on $vm..."
-  "$base/target/release/vinter_trace2img_legacy" analyze --output-dir "$results/vinter_rust" \
+  "$base/target/release/vinter_trace2img" analyze --generator=default --output-dir "$results/vinter_rust" \
     "$scriptdir/$vm.yaml" "$scriptdir/$test.yaml"
 done
