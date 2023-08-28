@@ -102,6 +102,16 @@ pub enum CrashImageGenerator {
     FailurePointTree,
 }
 
+impl std::fmt::Display for CrashImageGenerator {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            CrashImageGenerator::None => write!(f, "None"),
+            CrashImageGenerator::Heuristic => write!(f, "Heuristic"),
+            CrashImageGenerator::FailurePointTree => write!(f, "FailurePointTree"),
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub enum CrashPersistenceType {
     /// We always create an image at a checkpoint, even if there are no writes.
@@ -242,6 +252,8 @@ pub struct GenericCrashImageGenerator {
     pub crash_images: HashMap<CrashImageHash, CrashImage>,
     /// Semantic states extracted the crash images, indexed by their hash.
     pub semantic_states: HashMap<SemanticStateHash, SemanticState>,
+    fail_recovery_silent: bool,
+    failed_recovery_count: usize,
 }
 
 impl GenericCrashImageGenerator {
@@ -250,6 +262,7 @@ impl GenericCrashImageGenerator {
         test_config_path: PathBuf,
         mut output_dir: PathBuf,
         generator_config: CrashImageGenerator,
+        fail_recovery_silent: bool,
     ) -> Result<Self> {
         let vm_config: config::Config = {
             let f = File::open(&vm_config_path).context("could not open VM config file")?;
@@ -314,6 +327,8 @@ impl GenericCrashImageGenerator {
             rng: fastrand::Rng::with_seed(1633634632),
             crash_images: HashMap::new(),
             semantic_states: HashMap::new(),
+            fail_recovery_silent,
+            failed_recovery_count: 0,
         })
     }
 
@@ -578,8 +593,11 @@ impl GenericCrashImageGenerator {
                                 }
                             }
                             if !success {
-                                // Ignore errors here, state extraction will most likely also fail later on.
-                                println!("Recovery for crash image {:?} failed", hash);
+                                if !self.fail_recovery_silent {
+                                    // Ignore errors here, state extraction will most likely also fail later on.
+                                    println!("Recovery for crash image {:?} failed", hash);
+                                }
+                                self.failed_recovery_count += 1;
                             }
                             // unwrap: will never panic since we inserted the image above.
                             self.crash_images
@@ -855,4 +873,9 @@ impl GenericCrashImageGenerator {
         self.semantic_states = states;
         Ok(())
     }
+
+    pub fn get_failed_recovery_count(&self) -> usize {
+        self.failed_recovery_count
+    }
+
 }

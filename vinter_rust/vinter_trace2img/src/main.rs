@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use serde::Serialize;
 
 use vinter_trace2img::{
     CrashImageGenerator, GenericCrashImageGenerator, LineGranularity, MemoryImage, MemoryImageMmap,
@@ -49,7 +50,21 @@ enum Commands {
         #[clap(short, long)]
         /// Generator heuristic used to generate crash images. Options: (n)one, (d)efault, (f)pt.
         generator: Option<String>,
+        #[clap(short, long)]
+        /// Create a JSON output instead of the default, human readable text
+        json: bool,
     },
+}
+
+#[derive(Debug, Serialize)]
+struct JSONData {
+    vm: String,
+    test: String,
+    heuristic: String,
+    fences: usize,
+    crash_images: usize,
+    semantic_states: usize,
+    failed_recovery_count: usize,
 }
 
 fn main() -> Result<()> {
@@ -84,6 +99,7 @@ fn main() -> Result<()> {
             test_config,
             output_dir,
             generator,
+            json,
         } => {
             let mut gen_config = CrashImageGenerator::Heuristic;
             let mut fences_log_text = "fences";
@@ -106,31 +122,62 @@ fn main() -> Result<()> {
                 }
             }
 
+            let vm = vm_config.file_stem().unwrap().to_str().unwrap().to_string();
+            let test = test_config
+                .file_stem()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string();
+            let gen_config_name = gen_config.to_string();
+
             let mut gen = GenericCrashImageGenerator::new(
                 vm_config,
                 test_config,
                 output_dir.unwrap_or(PathBuf::from(".")),
                 gen_config,
+                json,
             )?;
 
-            println!("Tracing command...");
+            if !json {
+                println!("Tracing command...");
+            }
             gen.trace_pre_failure()
                 .context("pre-failure tracing failed")?;
-            println!("Pre-failure trace finished. Replaying trace...");
+            if !json {
+                println!("Pre-failure trace finished. Replaying trace...");
+            }
             let fences_with_writes = gen.replay().context("replay failed")?;
-            println!(
-                "Replay finished. {} {} with writes, {} crash images",
-                fences_with_writes,
-                fences_log_text,
-                gen.crash_images.len()
-            );
-            println!("Extracing semantic states...");
+            if !json {
+                println!(
+                    "Replay finished. {} {} with writes, {} crash images",
+                    fences_with_writes,
+                    fences_log_text,
+                    gen.crash_images.len()
+                );
+                println!("Extracing semantic states...");
+            }
             gen.extract_semantic_states()
                 .context("semantic state extraction failed")?;
-            println!(
-                "State extraction finished. {} unique states",
-                gen.semantic_states.len()
-            );
+            if !json {
+                println!(
+                    "State extraction finished. {} unique states, {} failed recovery attempts",
+                    gen.semantic_states.len(),
+                    gen.get_failed_recovery_count(),
+                );
+            } else {
+                let json = JSONData {
+                    vm,
+                    test,
+                    heuristic: gen_config_name,
+                    fences: fences_with_writes,
+                    crash_images: gen.crash_images.len(),
+                    semantic_states: gen.semantic_states.len(),
+                    failed_recovery_count: gen.get_failed_recovery_count(),
+                };
+                let serialized_json = serde_json::to_string(&json).unwrap();
+                println!("{}", serialized_json);
+            }
         }
     }
     Ok(())

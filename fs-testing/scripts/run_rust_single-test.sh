@@ -40,6 +40,9 @@ while [[ "${1-}" = -* ]]; do
     test=$2
     shift
     ;;
+  -j | --json)
+    options+=("--json")
+    ;;
   --help | -h | *)
     usage
     exit 0
@@ -54,7 +57,7 @@ if [ -f "$scriptdir/$test.yaml" ]; then
   # Analysis with vinter_rust using the new crash image generator
   for vm in "${vms[@]}"; do
     echo "Running vinter_rust with test $test on $vm..."
-    "$base/target/release/vinter_trace2img" analyze -g${generator} --output-dir "$results" \
+    "$base/target/release/vinter_trace2img" analyze -g${generator} "${options[@]}" --output-dir "$results" \
       "$scriptdir/$vm.yaml" "$scriptdir/$test.yaml"
   done
 else

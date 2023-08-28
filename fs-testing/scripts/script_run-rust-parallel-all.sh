@@ -19,6 +19,7 @@ usage() {
 
 parallel=1
 generator="default"
+use_and_parse_json=false
 
 while [[ "${1-}" = -* ]]; do
 	case "$1" in
@@ -38,6 +39,10 @@ while [[ "${1-}" = -* ]]; do
 			;;
 		esac
 		;;
+	-j | --json)
+		use_and_parse_json=true
+		echo "" >$results/rust_parallel_results.json
+		;;
 	--help | -h | *)
 		usage
 		exit 0
@@ -48,5 +53,13 @@ while [[ "${1-}" = -* ]]; do
 done
 
 for vm in "${vms[@]}"; do
-	find "$scriptdir" -name "test_*.yaml" | xargs -Ipath basename path .yaml | xargs -Itestname -P "$parallel" "$base/target/release/vinter_trace2img" analyze -g${generator} --output-dir "$results/testname" "$scriptdir/$vm.yaml" "$scriptdir/testname.yaml" || true
+	if [ "$use_and_parse_json" = true ]; then
+		jq -n ".${vm//[^[:alnum:]]/_} |= []" >$results/empty_vm.json
+
+		jq -s "add" $results/rust_parallel_results.json $results/empty_vm.json >$results/rust_parallel_results.json.tmp && mv $results/rust_parallel_results.json.tmp $results/rust_parallel_results.json
+
+		find "$scriptdir" -name "test_*.yaml" | xargs -Ipath basename path .yaml | xargs -Itestname -P "$parallel" "$base/target/release/vinter_trace2img" analyze -g${generator} --json --output-dir "$results/testname" "$scriptdir/$vm.yaml" "$scriptdir/testname.yaml" | tee /dev/tty | sed 's/"/\\"/g' | xargs -d'\n' -I fulljsonstring bash -c "j=\"fulljsonstring\"; jq \".${vm//[^[:alnum:]]/_} += [\"\$j\"]\" $results/rust_parallel_results.json > $results/rust_parallel_results.json.tmp && mv $results/rust_parallel_results.json.tmp $results/rust_parallel_results.json"
+	else
+		find "$scriptdir" -name "test_*.yaml" | xargs -Ipath basename path .yaml | xargs -Itestname -P "$parallel" "$base/target/release/vinter_trace2img" analyze -g${generator} --output-dir "$results/testname" "$scriptdir/$vm.yaml" "$scriptdir/testname.yaml"
+	fi
 done
