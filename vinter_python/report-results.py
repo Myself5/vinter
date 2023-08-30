@@ -131,12 +131,21 @@ def analyze(dir: Path, diff=False, verbose=False):
     for checkpoint, states in sorted(checkpoint_states.items(), key=lambda item: item[0]):
         if checkpoint < checkpoint_start or checkpoint >= checkpoint_end:
             continue
+
+        final_states, _, dirty_lines = checkpoint_first_fence[checkpoint+1][1:4]
+
+        # Add final states to the state list if not existent.
+        # The Heuristic usually takes care of that indirectly
+        # but this is not the case when using the FPT
+        for final_state in final_states:
+            if final_state not in states:
+                states.add(final_state)
+
         print(f'checkpoint {checkpoint} -> {checkpoint+1}:')
         if verbose:
             print(f'  {LIGHT_GRAY}trace line {checkpoint_first_fence[checkpoint][0]} -> {checkpoint_first_fence[checkpoint+1][0]}{END}')
         # TODO: Also add heuristic-based initial states here
         print(f'  {len(states)} states: {", ".join(sorted(map(format_state, states)))}')
-        final_states, _, dirty_lines = checkpoint_first_fence[checkpoint+1][1:4]
         if len(final_states) > 1:
             print(f'  {RED}{len(final_states)} final states{END}: {", ".join(sorted(final_states))}')
             if verbose:
