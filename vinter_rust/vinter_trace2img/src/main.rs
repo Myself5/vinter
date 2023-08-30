@@ -1,7 +1,6 @@
 use std::fs::File;
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
-use std::time::Instant;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -9,7 +8,7 @@ use serde::Serialize;
 
 use vinter_trace2img::{
     CrashImageGenerator, GenericCrashImageGenerator, LineGranularity, MemoryImage, MemoryImageMmap,
-    MemoryReplayer, X86PersistentMemory, Mmss,
+    MemoryReplayer, Mmss, X86PersistentMemory,
 };
 
 #[derive(Parser)]
@@ -54,6 +53,9 @@ enum Commands {
         #[clap(short, long)]
         /// Create a JSON output instead of the default, human readable text
         json: bool,
+        #[clap(short, long)]
+        /// Show verbose duration timings (always included in json)
+        verbose: bool,
     },
 }
 
@@ -66,6 +68,7 @@ struct JSONData {
     crash_images: usize,
     semantic_states: usize,
     failed_recovery_count: usize,
+    trace_duration: u128,
     crash_image_duration: u128,
     semantic_state_duration: u128,
     total_duration: u128,
@@ -104,6 +107,7 @@ fn main() -> Result<()> {
             output_dir,
             generator,
             json,
+            verbose,
         } => {
             let mut gen_config = CrashImageGenerator::Heuristic;
             let mut fences_log_text = "fences";
@@ -146,7 +150,6 @@ fn main() -> Result<()> {
             if !json {
                 println!("Tracing command...");
             }
-            let start = Instant::now();
             gen.trace_pre_failure()
                 .context("pre-failure tracing failed")?;
             if !json {
@@ -162,21 +165,48 @@ fn main() -> Result<()> {
                 );
                 println!("Extracing semantic states...");
             }
-            let crashimage_duration = start.elapsed();
-            let semantic_state_start = Instant::now();
             gen.extract_semantic_states()
                 .context("semantic state extraction failed")?;
-            let semantic_state_duration = semantic_state_start.elapsed();
-            let end = start.elapsed();
             if !json {
                 println!(
-                    "State extraction finished. {} unique states, {} failed recovery attempts.\nDuration: Crash Image: {} Semantic States: {} Total: {}",
+                    "State extraction finished. {} unique states, {} failed recovery attempts.",
                     gen.semantic_states.len(),
                     gen.get_failed_recovery_count(),
-                    crashimage_duration.mmss(),
-                    semantic_state_duration.mmss(),
-                    end.mmss(),
                 );
+                if verbose {
+                    println!("Durations:");
+                    println!(
+                        "Trace: {}",
+                        gen.get_timing_start_crash_image_generation()
+                            .duration_since(gen.get_timing_trace())
+                            .mmss(),
+                    );
+                    println!(
+                        "Crash Image Generation: {}",
+                        gen.get_timing_start_semantic_state_generation()
+                            .duration_since(gen.get_timing_start_crash_image_generation())
+                            .mmss(),
+                    );
+                    println!(
+                        "Semantic State Extraction: {}",
+                        gen.get_timing_end_semantic_state_generation()
+                            .duration_since(gen.get_timing_start_semantic_state_generation())
+                            .mmss(),
+                    );
+                    println!(
+                        "Total: {}",
+                        gen.get_timing_end_semantic_state_generation()
+                            .duration_since(gen.get_timing_trace())
+                            .mmss()
+                    );
+                } else {
+                    println!(
+                        "Total Duration: {}",
+                        gen.get_timing_end_semantic_state_generation()
+                            .duration_since(gen.get_timing_trace())
+                            .mmss()
+                    );
+                }
             } else {
                 let json = JSONData {
                     vm,
@@ -186,9 +216,22 @@ fn main() -> Result<()> {
                     crash_images: gen.crash_images.len(),
                     semantic_states: gen.semantic_states.len(),
                     failed_recovery_count: gen.get_failed_recovery_count(),
-                    crash_image_duration: crashimage_duration.as_millis(),
-                    semantic_state_duration: semantic_state_duration.as_millis(),
-                    total_duration: end.as_millis(),
+                    trace_duration: gen
+                        .get_timing_start_crash_image_generation()
+                        .duration_since(gen.get_timing_trace())
+                        .as_millis(),
+                    crash_image_duration: gen
+                        .get_timing_start_semantic_state_generation()
+                        .duration_since(gen.get_timing_start_crash_image_generation())
+                        .as_millis(),
+                    semantic_state_duration: gen
+                        .get_timing_end_semantic_state_generation()
+                        .duration_since(gen.get_timing_start_semantic_state_generation())
+                        .as_millis(),
+                    total_duration: gen
+                        .get_timing_end_semantic_state_generation()
+                        .duration_since(gen.get_timing_trace())
+                        .as_millis(),
                 };
                 let serialized_json = serde_json::to_string(&json).unwrap();
                 println!("{}", serialized_json);

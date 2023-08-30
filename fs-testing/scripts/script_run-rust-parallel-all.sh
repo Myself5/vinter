@@ -15,11 +15,14 @@ usage() {
 	echo "Options:"
 	echo " -P <num>: Analyze with <num> parallel instances (default 1)"
 	echo " -g (n)one, (d)efault, (f)pt: Specify the used heuristic generator"
+	echo " -(j)son: Create a JSON output instead of the default, human readable text"
+	echo " -(v)erbose: Show verbose duration timings (always included in json)"
 }
 
 parallel=1
 generator="default"
 use_and_parse_json=false
+options=()
 
 while [[ "${1-}" = -* ]]; do
 	case "$1" in
@@ -43,6 +46,9 @@ while [[ "${1-}" = -* ]]; do
 		use_and_parse_json=true
 		echo "" >$results/rust_parallel_results.json
 		;;
+	-v | --verbose)
+		options+=("--verbose")
+		;;
 	--help | -h | *)
 		usage
 		exit 0
@@ -58,7 +64,9 @@ for vm in "${vms[@]}"; do
 
 		jq -s "add" $results/rust_parallel_results.json $results/empty_vm.json >$results/rust_parallel_results.json.tmp && mv $results/rust_parallel_results.json.tmp $results/rust_parallel_results.json
 
-		find "$scriptdir" -name "test_*.yaml" | xargs -Ipath basename path .yaml | xargs -Itestname -P "$parallel" "$base/target/release/vinter_trace2img" analyze -g${generator} --json --output-dir "$results/testname" "$scriptdir/$vm.yaml" "$scriptdir/testname.yaml" | tee /dev/tty | sed 's/"/\\"/g' | xargs -d'\n' -I fulljsonstring bash -c "j=\"fulljsonstring\"; jq \".${vm//[^[:alnum:]]/_}.results += [\"\$j\"]\" $results/rust_parallel_results.json > $results/rust_parallel_results.json.tmp && mv $results/rust_parallel_results.json.tmp $results/rust_parallel_results.json"
+		find "$scriptdir" -name "test_*.yaml" | xargs -Ipath basename path .yaml | xargs -Itestname -P "$parallel" "$base/target/release/vinter_trace2img" analyze -g${generator} --json "${options[@]}" --output-dir "$results/testname" "$scriptdir/$vm.yaml" "$scriptdir/testname.yaml" | tee /dev/tty | sed 's/"/\\"/g' | xargs -d'\n' -I fulljsonstring bash -c "j=\"fulljsonstring\"; jq \".${vm//[^[:alnum:]]/_}.results += [\"\$j\"]\" $results/rust_parallel_results.json > $results/rust_parallel_results.json.tmp && mv $results/rust_parallel_results.json.tmp $results/rust_parallel_results.json"
+
+		t=$(jq "[.${vm//[^[:alnum:]]/_} | .results[] | .trace_duration] | reduce .[] as \$num (0; .+\$num)" $results/rust_parallel_results.json)
 
 		c=$(jq "[.${vm//[^[:alnum:]]/_} | .results[] | .crash_image_duration] | reduce .[] as \$num (0; .+\$num)" $results/rust_parallel_results.json)
 
@@ -66,8 +74,8 @@ for vm in "${vms[@]}"; do
 
 		f=$(jq "[.${vm//[^[:alnum:]]/_} | .results[] | .total_duration] | reduce .[] as \$num (0; .+\$num)" $results/rust_parallel_results.json)
 
-		jq ".${vm//[^[:alnum:]]/_} += {crash_image_duration: $c,semantic_state_duration: $s,full_run_duration: $f}" $results/rust_parallel_results.json >$results/rust_parallel_results.json.tmp && mv $results/rust_parallel_results.json.tmp $results/rust_parallel_results.json
+		jq ".${vm//[^[:alnum:]]/_} += {trace_duration: $t,crash_image_duration: $c,semantic_state_duration: $s,full_run_duration: $f}" $results/rust_parallel_results.json >$results/rust_parallel_results.json.tmp && mv $results/rust_parallel_results.json.tmp $results/rust_parallel_results.json
 	else
-		find "$scriptdir" -name "test_*.yaml" | xargs -Ipath basename path .yaml | xargs -Itestname -P "$parallel" "$base/target/release/vinter_trace2img" analyze -g${generator} --output-dir "$results/testname" "$scriptdir/$vm.yaml" "$scriptdir/testname.yaml"
+		find "$scriptdir" -name "test_*.yaml" | xargs -Ipath basename path .yaml | xargs -Itestname -P "$parallel" "$base/target/release/vinter_trace2img" analyze -g${generator} "${options[@]}" --output-dir "$results/testname" "$scriptdir/$vm.yaml" "$scriptdir/testname.yaml"
 	fi
 done

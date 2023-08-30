@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::Command;
 use std::rc::Rc;
+use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context, Result};
 use itertools::Itertools;
@@ -267,6 +268,10 @@ pub struct GenericCrashImageGenerator {
     pub semantic_states: HashMap<SemanticStateHash, SemanticState>,
     fail_recovery_silent: bool,
     failed_recovery_count: usize,
+    timing_start_trace: Instant,
+    timing_start_crash_image_generation: Instant,
+    timing_start_semantic_state_generation: Instant,
+    timing_end_semantic_state_generation: Instant,
 }
 
 impl GenericCrashImageGenerator {
@@ -342,11 +347,17 @@ impl GenericCrashImageGenerator {
             semantic_states: HashMap::new(),
             fail_recovery_silent,
             failed_recovery_count: 0,
+            timing_start_trace: Instant::now(),
+            timing_start_crash_image_generation: Instant::now(),
+            timing_start_semantic_state_generation: Instant::now(),
+            timing_end_semantic_state_generation: Instant::now(),
         })
     }
 
     /// Start a VM and trace test execution.
-    pub fn trace_pre_failure(&self) -> Result<()> {
+    pub fn trace_pre_failure(&mut self) -> Result<()> {
+        self.timing_start_trace = Instant::now();
+
         let cmd = format!("cat /proc/uptime; cat /proc/uptime; cat /proc/uptime; {prefix} && {suffix} && hypercall success; cat /proc/uptime",
             prefix = self.vm_config.commands.get("trace_cmd_prefix").ok_or_else(|| anyhow!("missing trace_cmd_prefix in VM configuration"))?,
             suffix = self.test_config.trace_cmd_suffix);
@@ -782,7 +793,11 @@ impl GenericCrashImageGenerator {
         let replayer_mem = replayer.mem.clone();
         let trace_file = File::open(self.trace_path()).context("could not open trace file")?;
 
-        for entry in replayer.process_trace(BufReader::new(trace_file)) {
+        let processed_trace = replayer.process_trace(BufReader::new(trace_file));
+
+        self.timing_start_crash_image_generation = Instant::now();
+
+        for entry in processed_trace {
             match entry? {
                 // Only account for flushes when using the FPT
                 TraceEntry::Flush { id, metadata, .. }
@@ -862,6 +877,8 @@ impl GenericCrashImageGenerator {
 
     /// Extract the semantic state of each crash image.
     pub fn extract_semantic_states(&mut self) -> Result<()> {
+        self.timing_start_semantic_state_generation = Instant::now();
+
         let mut states = HashMap::new();
         for (image_hash, image) in &self.crash_images {
             let state = self.run_state_extractor(image)?;
@@ -884,6 +901,7 @@ impl GenericCrashImageGenerator {
             .context("failed writing semantic_states/index.yaml")?;
 
         self.semantic_states = states;
+        self.timing_end_semantic_state_generation = Instant::now();
         Ok(())
     }
 
@@ -891,4 +909,19 @@ impl GenericCrashImageGenerator {
         self.failed_recovery_count
     }
 
+    pub fn get_timing_trace(&self) -> Instant {
+        self.timing_start_trace
+    }
+
+    pub fn get_timing_start_crash_image_generation(&self) -> Instant {
+        self.timing_start_crash_image_generation
+    }
+
+    pub fn get_timing_start_semantic_state_generation(&self) -> Instant {
+        self.timing_start_semantic_state_generation
+    }
+
+    pub fn get_timing_end_semantic_state_generation(&self) -> Instant {
+        self.timing_end_semantic_state_generation
+    }
 }

@@ -17,6 +17,8 @@ usage() {
   echo "Options:"
   echo " -g (n)one, (d)efault, (f)pt: Specify the used heuristic generator"
   echo " -t <testname>: Specify the test to run. Default: test_hello-world"
+	echo " -(j)son: Create a JSON output instead of the default, human readable text"
+	echo " -(v)erbose: Show verbose duration timings (always included in json)"
 }
 
 generator="default"
@@ -42,6 +44,9 @@ while [[ "${1-}" = -* ]]; do
     ;;
   -j | --json)
     options+=("--json")
+    ;;
+  -v | --verbose)
+    options+=("--verbose")
     ;;
   --help | -h | *)
     usage
