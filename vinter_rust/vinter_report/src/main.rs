@@ -2,7 +2,6 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
-use addr2line::gimli::ReaderOffset;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
@@ -113,7 +112,7 @@ fn main() -> Result<()> {
                                     println!("\tstack trace:");
                                     for (i, addr) in metadata.kernel_stacktrace.iter().enumerate() {
                                         print!("\t#{}: ", i + 1);
-                                        print_frame(a2l, (*addr).into_u64());
+                                        print_frame(a2l, *addr);
                                     }
                                 }
                             }

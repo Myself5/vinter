@@ -12,7 +12,7 @@ pub struct Metadata {
     /// currently in kernel mode?
     pub in_kernel: bool,
     /// kernel stack trace (frame pointer walk)
-    pub kernel_stacktrace: Vec<usize>,
+    pub kernel_stacktrace: Vec<u64>,
 }
 
 #[derive(Debug, Encode, Decode)]
