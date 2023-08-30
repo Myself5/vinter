@@ -3,14 +3,14 @@ type FPTraceLink = Option<NonNull<FPTraceAddr>>;
 
 #[derive(Debug, Clone)]
 pub struct FPTraceAddr {
-    addr: usize,
+    addr: u64,
     visited: bool,
     children: Vec<FPTraceLink>,
     parent: FPTraceLink,
 }
 
 impl FPTraceAddr {
-    pub fn new(addr: usize, children: Vec<FPTraceLink>, parent: FPTraceLink) -> FPTraceAddr {
+    pub fn new(addr: u64, children: Vec<FPTraceLink>, parent: FPTraceLink) -> FPTraceAddr {
         FPTraceAddr {
             addr,
             visited: false,
@@ -19,7 +19,7 @@ impl FPTraceAddr {
         }
     }
 
-    pub fn get_addr(&self) -> usize {
+    pub fn get_addr(&self) -> u64 {
         self.addr
     }
 
@@ -45,7 +45,7 @@ impl FailurePointTree {
 
     // Returns "Path Found" if the full path is contained and Errors on the last link if not
     // Only used in the example/testing
-    pub fn contains(&self, addr: &[usize], length: usize) -> Result<bool, FPTraceLink> {
+    pub fn contains(&self, addr: &[u64], length: usize) -> Result<bool, FPTraceLink> {
         if unsafe { (*self.root.unwrap().as_ptr()).addr } == addr[0] {
             if length > 1 {
                 if let (_, Some(p)) = self.contains_root(self.root, 1, &addr[1..], length - 1) {
@@ -63,7 +63,7 @@ impl FailurePointTree {
         &self,
         root: FPTraceLink,
         depth: usize,
-        addr: &[usize],
+        addr: &[u64],
         length: usize,
     ) -> (usize, FPTraceLink) {
         for child in unsafe { (*root.unwrap().as_ptr()).children.to_vec() } {
@@ -81,7 +81,7 @@ impl FailurePointTree {
     }
 
     // Return true if the stack has been added to the tree, false if not or if it has been included before
-    pub fn add(&mut self, addr: &[usize], length: usize) -> bool {
+    pub fn add(&mut self, addr: &[u64], length: usize) -> bool {
         if length <= 0 {
             return false;
         }
@@ -108,7 +108,7 @@ impl FailurePointTree {
     }
 
     // Return true if the stack has been added to the tree, false if not or if it has been included before
-    fn add_to_parent(&mut self, parent: FPTraceLink, addr: &[usize], length: usize) -> bool {
+    fn add_to_parent(&mut self, parent: FPTraceLink, addr: &[u64], length: usize) -> bool {
         if length <= 0 {
             return false;
         }
@@ -168,11 +168,11 @@ impl FailurePointTree {
     }
 
     // Used in Example/Testing
-    pub fn search(&self, addr: usize) -> FPTraceLink {
+    pub fn search(&self, addr: u64) -> FPTraceLink {
         self.search_root(self.root, addr)
     }
 
-    fn search_root(&self, parent: FPTraceLink, addr: usize) -> FPTraceLink {
+    fn search_root(&self, parent: FPTraceLink, addr: u64) -> FPTraceLink {
         if unsafe {
             !(*parent.unwrap().as_ptr()).visited && (*parent.unwrap().as_ptr()).addr == addr
         } {
@@ -188,7 +188,7 @@ impl FailurePointTree {
     }
 
     // Used in Example/Testing
-    pub fn get_by_addrs(&self, addr: &[usize], length: usize) -> FPTraceLink {
+    pub fn get_by_addrs(&self, addr: &[u64], length: usize) -> FPTraceLink {
         let ret = self.get_by_addrs_root(self.root, addr, length);
         if let None = ret {
             println!("Addr stack not in tree");
@@ -196,7 +196,7 @@ impl FailurePointTree {
         ret
     }
 
-    fn get_by_addrs_root(&self, parent: FPTraceLink, addr: &[usize], length: usize) -> FPTraceLink {
+    fn get_by_addrs_root(&self, parent: FPTraceLink, addr: &[u64], length: usize) -> FPTraceLink {
         if unsafe { (*parent.unwrap().as_ptr()).addr } != addr[0] {
         } else {
             if length > 1 {
@@ -213,13 +213,13 @@ impl FailurePointTree {
     }
 
     // Used in Example/Testing
-    pub fn get_path_from_addr(&self, link: FPTraceLink) -> Vec<usize> {
+    pub fn get_path_from_addr(&self, link: FPTraceLink) -> Vec<u64> {
         let mut vec = self.get_path_from_addr_rec(link, Vec::new());
         vec.reverse();
         vec
     }
 
-    fn get_path_from_addr_rec(&self, link: FPTraceLink, mut vec: Vec<usize>) -> Vec<usize> {
+    fn get_path_from_addr_rec(&self, link: FPTraceLink, mut vec: Vec<u64>) -> Vec<u64> {
         match link {
             Some(l) => unsafe {
                 vec.push((*l.as_ptr()).addr);

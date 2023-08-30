@@ -498,7 +498,7 @@ impl GenericCrashImageGenerator {
         fence_id: usize,
         mem: &X86PersistentMemory,
         checkpoint_id: isize,
-        callstack_option: Option<&[usize]>,
+        callstack_option: Option<&[u64]>,
     ) -> Result<()> {
         use std::collections::hash_map::Entry;
         macro_rules! image_entry {
