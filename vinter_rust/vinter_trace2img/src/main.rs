@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -8,7 +9,7 @@ use serde::Serialize;
 
 use vinter_trace2img::{
     CrashImageGenerator, GenericCrashImageGenerator, LineGranularity, MemoryImage, MemoryImageMmap,
-    MemoryReplayer, Mmss, X86PersistentMemory,
+    MemoryReplayer, Mmss, TraceAnalyzer, X86PersistentMemory,
 };
 
 #[derive(Parser)]
@@ -56,6 +57,9 @@ enum Commands {
         #[clap(short, long)]
         /// Show verbose duration timings (always included in json)
         verbose: bool,
+        #[clap(short, long)]
+        /// Use Advanced Trace analysis to find performance and implementation bugs
+        trace_analysis: bool,
     },
 }
 
@@ -67,11 +71,13 @@ struct JSONData {
     fences: usize,
     crash_images: usize,
     semantic_states: usize,
-    failed_recovery_count: usize,
-    trace_duration: u128,
-    crash_image_duration: u128,
-    semantic_state_duration: u128,
-    total_duration: u128,
+    failed_recoveries: usize,
+    ta_bugs: usize,
+    trace_ms: u128,
+    crash_image_ms: u128,
+    trace_analysis_ms: u128,
+    semantic_state_ms: u128,
+    total_ms: u128,
 }
 
 fn main() -> Result<()> {
@@ -108,6 +114,7 @@ fn main() -> Result<()> {
             generator,
             json,
             verbose,
+            trace_analysis,
         } => {
             let mut gen_config = CrashImageGenerator::Heuristic;
             let mut fences_log_text = "fences";
@@ -155,14 +162,36 @@ fn main() -> Result<()> {
             if !json {
                 println!("Pre-failure trace finished. Replaying trace...");
             }
-            let fences_with_writes = gen.replay().context("replay failed")?;
+            let (fences_with_writes, trace_entries) =
+                gen.replay(trace_analysis).context("replay failed")?;
+
+            let mut ta_bugs = 0;
+            let trace_analysis_start = Instant::now();
+            if trace_analysis {
+                if !json {
+                    println!("Analyzing Trace...");
+                }
+                let mut ta = TraceAnalyzer::new();
+                ta_bugs = ta.analyze_trace(trace_entries);
+            }
+
             if !json {
-                println!(
-                    "Replay finished. {} {} with writes, {} crash images",
+                if !trace_analysis {
+                    println!(
+                        "Replay finished. {} {} with writes, {} crash images",
+                        fences_with_writes,
+                        fences_log_text,
+                        gen.crash_images.len()
+                    );
+                } else {
+                    println!(
+                    "Replay finished. {} {} with writes, {} crash images, {} trace analysis bugs",
                     fences_with_writes,
                     fences_log_text,
-                    gen.crash_images.len()
+                    gen.crash_images.len(),
+                    ta_bugs,
                 );
+                }
                 println!("Extracing semantic states...");
             }
             gen.extract_semantic_states()
@@ -183,10 +212,22 @@ fn main() -> Result<()> {
                     );
                     println!(
                         "Crash Image Generation: {}",
-                        gen.get_timing_start_semantic_state_generation()
-                            .duration_since(gen.get_timing_start_crash_image_generation())
-                            .mmss(),
+                        if trace_analysis {
+                            trace_analysis_start
+                        } else {
+                            gen.get_timing_start_semantic_state_generation()
+                        }
+                        .duration_since(gen.get_timing_start_crash_image_generation())
+                        .mmss(),
                     );
+                    if trace_analysis {
+                        println!(
+                            "Trace Analysis: {}",
+                            gen.get_timing_start_semantic_state_generation()
+                                .duration_since(trace_analysis_start)
+                                .mmss(),
+                        );
+                    }
                     println!(
                         "Semantic State Extraction: {}",
                         gen.get_timing_end_semantic_state_generation()
@@ -215,20 +256,31 @@ fn main() -> Result<()> {
                     fences: fences_with_writes,
                     crash_images: gen.crash_images.len(),
                     semantic_states: gen.semantic_states.len(),
-                    failed_recovery_count: gen.get_failed_recovery_count(),
-                    trace_duration: gen
+                    failed_recoveries: gen.get_failed_recovery_count(),
+                    ta_bugs,
+                    trace_ms: gen
                         .get_timing_start_crash_image_generation()
                         .duration_since(gen.get_timing_trace())
                         .as_millis(),
-                    crash_image_duration: gen
-                        .get_timing_start_semantic_state_generation()
-                        .duration_since(gen.get_timing_start_crash_image_generation())
-                        .as_millis(),
-                    semantic_state_duration: gen
+                    crash_image_ms: if trace_analysis {
+                        trace_analysis_start
+                    } else {
+                        gen.get_timing_start_semantic_state_generation()
+                    }
+                    .duration_since(gen.get_timing_start_crash_image_generation())
+                    .as_millis(),
+                    trace_analysis_ms: if trace_analysis {
+                        gen.get_timing_start_semantic_state_generation()
+                            .duration_since(trace_analysis_start)
+                            .as_millis()
+                    } else {
+                        0
+                    },
+                    semantic_state_ms: gen
                         .get_timing_end_semantic_state_generation()
                         .duration_since(gen.get_timing_start_semantic_state_generation())
                         .as_millis(),
-                    total_duration: gen
+                    total_ms: gen
                         .get_timing_end_semantic_state_generation()
                         .duration_since(gen.get_timing_trace())
                         .as_millis(),

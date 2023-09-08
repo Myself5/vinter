@@ -17,8 +17,9 @@ usage() {
   echo "Options:"
   echo " -g (n)one, (d)efault, (f)pt: Specify the used heuristic generator"
   echo " -t <testname>: Specify the test to run. Default: test_hello-world"
-	echo " -(j)son: Create a JSON output instead of the default, human readable text"
-	echo " -(v)erbose: Show verbose duration timings (always included in json)"
+  echo " -(j)son: Create a JSON output instead of the default, human readable text"
+  echo " -(v)erbose: Show verbose duration timings (always included in json)"
+  echo " --ta: Use advanced trace analysis"
 }
 
 generator="default"
@@ -47,6 +48,9 @@ while [[ "${1-}" = -* ]]; do
     ;;
   -v | --verbose)
     options+=("--verbose")
+    ;;
+  --ta)
+    options+=("--trace-analysis")
     ;;
   --help | -h | *)
     usage

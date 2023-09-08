@@ -26,6 +26,8 @@ pub mod config;
 mod fptree;
 pub use fptree::{FPTraceAddr, FailurePointTree};
 
+const CACHELINE_SIZE: usize = 64;
+
 pub trait Mmss {
     fn mmss(&self) -> String;
 }
@@ -36,6 +38,345 @@ impl Mmss for std::time::Duration {
         let (m, s) = (s / 60, s % 60);
 
         format!("{:02}:{:02}", m, s)
+    }
+}
+
+pub struct TraceAnalysisEntry {
+    checkpoint_id: isize,
+    trace_entry: TraceEntry,
+}
+
+impl TraceAnalysisEntry {
+    fn new(checkpoint_id: isize, trace_entry: TraceEntry) -> TraceAnalysisEntry {
+        TraceAnalysisEntry {
+            checkpoint_id,
+            trace_entry,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum BugType {
+    RedundantFlush,
+    RedundantFence,
+    MissingFlush,
+    MissingFence,
+    OverwrittenUnflushed,
+    OverwrittenUnfenced,
+    ImplicitFlush,
+    UnorderedFlushes,
+    None,
+}
+
+#[derive(Clone)]
+pub struct Bug {
+    bug_type: BugType,
+    checkpoint: isize,
+    id: usize,
+}
+
+impl Bug {
+    pub fn new(bug_type: BugType, checkpoint: isize, id: usize) -> Bug {
+        Bug {
+            bug_type,
+            checkpoint,
+            id,
+        }
+    }
+}
+
+#[derive(PartialEq, Clone)]
+enum StoreState {
+    Modified,
+    PartiallyFlushed,
+    Flushed,
+    // Fenced, // Unused, but included in the Mumak design
+}
+
+#[derive(Clone)]
+struct Store {
+    size: usize,
+    checkpoint_id: isize,
+    instruction_id: usize,
+    state: StoreState,
+}
+
+impl Store {
+    fn new(size: usize, checkpoint_id: isize, instruction_id: usize) -> Store {
+        Store {
+            size,
+            checkpoint_id,
+            instruction_id,
+            state: StoreState::Modified,
+        }
+    }
+    fn change_state(&mut self, new_state: StoreState) {
+        self.state = new_state;
+    }
+}
+
+pub struct TraceAnalyzer {
+    fences_pending: HashMap<usize, Store>,
+    flushes_pending: HashMap<usize, Store>,
+    bugs: Vec<Bug>,
+    flushes: usize,
+    implicit_flushes: usize,
+    unordered_flushes: usize,
+}
+
+impl TraceAnalyzer {
+    pub fn new() -> TraceAnalyzer {
+        TraceAnalyzer {
+            fences_pending: HashMap::new(),
+            flushes_pending: HashMap::new(),
+            bugs: Vec::new(),
+            flushes: 0,
+            implicit_flushes: 0,
+            unordered_flushes: 0,
+        }
+    }
+
+    fn target_store_contains_source_store(
+        source_addr: usize,
+        source_size: usize,
+        target_addr: usize,
+        target_size: usize,
+    ) -> bool {
+        (target_addr <= source_addr) && (target_size >= (source_addr + source_size))
+    }
+
+    fn source_store_contains_target_store(
+        source_addr: usize,
+        source_size: usize,
+        target_addr: usize,
+        target_size: usize,
+    ) -> bool {
+        (target_addr >= source_addr) && (target_size <= (source_addr + source_size))
+    }
+
+    fn store_is_partially_inside_cacheline_in_left(
+        flush_addr: usize,
+        flush_size: usize,
+        store_addr: usize,
+        store_size: usize,
+    ) -> bool {
+        (flush_addr > store_addr)
+            && ((store_addr + store_size) > flush_addr)
+            && ((flush_addr + flush_size) > (store_addr + store_size))
+    }
+
+    fn store_is_partially_inside_cacheline_in_right(
+        flush_addr: usize,
+        flush_size: usize,
+        store_addr: usize,
+        store_size: usize,
+    ) -> bool {
+        (flush_addr < store_addr)
+            && ((flush_addr + flush_size) > store_addr)
+            && ((flush_addr + flush_size) < (store_addr + store_size))
+    }
+
+    fn store_is_partially_inside_cacheline(
+        flush_addr: usize,
+        flush_size: usize,
+        store_addr: usize,
+        store_size: usize,
+    ) -> bool {
+        Self::store_is_partially_inside_cacheline_in_right(
+            flush_addr, flush_size, store_addr, store_size,
+        ) || Self::store_is_partially_inside_cacheline_in_left(
+            flush_addr, flush_size, store_addr, store_size,
+        )
+    }
+
+    fn store_is_inside_cacheline(
+        flush_addr: usize,
+        flush_size: usize,
+        store_addr: usize,
+        store_size: usize,
+    ) -> bool {
+        (store_addr >= flush_addr) && (store_addr + store_size <= flush_addr + flush_size)
+    }
+
+    pub fn analyze_trace(&mut self, trace_entry_vec: Vec<TraceAnalysisEntry>) -> usize {
+        for entry in trace_entry_vec {
+            match entry.trace_entry {
+                TraceEntry::Write {
+                    id,
+                    address,
+                    size,
+                    non_temporal,
+                    ..
+                } => self.process_trace_entry_write(
+                    address,
+                    size,
+                    non_temporal,
+                    entry.checkpoint_id,
+                    id,
+                ),
+                TraceEntry::Fence { id, .. } => {
+                    self.process_trace_entry_fence(id, entry.checkpoint_id)
+                }
+                TraceEntry::Flush {
+                    id,
+                    mnemonic,
+                    address,
+                    ..
+                } => self.process_trace_entry_flush(&mnemonic, address, id, entry.checkpoint_id),
+                _ => (),
+            }
+        }
+
+        self.check_remainder();
+
+        self.bugs.len()
+    }
+
+    fn process_trace_entry_write(
+        &mut self,
+        address: usize,
+        size: usize,
+        non_temporal: bool,
+        checkpoint_id: isize,
+        id: usize,
+    ) {
+        let mut write = Store::new(size, checkpoint_id, id);
+        self.check_store_flush(address, size);
+        self.check_store_fence(address, size);
+        if non_temporal {
+            write.change_state(StoreState::Flushed);
+            self.fences_pending.insert(address, write);
+        } else {
+            self.flushes_pending.insert(address, write);
+        }
+    }
+
+    fn check_store_fence(&mut self, address: usize, size: usize) {
+        let write_end = address + size;
+
+        let mut retained_group = self.fences_pending.clone();
+        retained_group.retain(|&k, _| k >= address && k < write_end);
+
+        for (k, v) in retained_group {
+            if Self::target_store_contains_source_store(k, v.size, address, write_end)
+                || Self::source_store_contains_target_store(k, v.size, address, write_end)
+            {
+                self.bugs.push(Bug::new(
+                    BugType::OverwrittenUnfenced,
+                    v.checkpoint_id,
+                    v.instruction_id,
+                ));
+
+                self.fences_pending.remove(&k);
+            }
+        }
+    }
+
+    fn check_store_flush(&mut self, address: usize, size: usize) {
+        let write_end = address + size;
+
+        let mut retained_group = self.flushes_pending.clone();
+        retained_group.retain(|&k, _| k >= address && k < write_end);
+
+        for (k, v) in retained_group {
+            if Self::target_store_contains_source_store(k, v.size, address, write_end)
+                || Self::source_store_contains_target_store(k, v.size, address, write_end)
+            {
+                self.bugs.push(Bug::new(
+                    BugType::OverwrittenUnflushed,
+                    v.checkpoint_id,
+                    v.instruction_id,
+                ));
+
+                self.flushes_pending.remove(&k);
+            }
+        }
+    }
+
+    fn process_trace_entry_fence(&mut self, id: usize, checkpoint_id: isize) {
+        if self.fences_pending.len() == 0 {
+            self.bugs
+                .push(Bug::new(BugType::RedundantFence, checkpoint_id, id));
+        }
+        self.fences_pending.clear();
+        if self.unordered_flushes > 1 {
+            self.bugs
+                .push(Bug::new(BugType::UnorderedFlushes, checkpoint_id, id));
+        }
+        self.unordered_flushes = 0;
+    }
+
+    fn process_trace_entry_flush(
+        &mut self,
+        mnemonic: &String,
+        address: usize,
+        id: usize,
+        checkpoint_id: isize,
+    ) {
+        let mut flushed_stores = 0;
+        let flush_end = address + CACHELINE_SIZE;
+
+        let mut retained_group = self.flushes_pending.clone();
+        retained_group.retain(|&k, _| k >= address && k < flush_end);
+        if retained_group.len() > 0 {
+            for (k, mut v) in retained_group {
+                if Self::store_is_inside_cacheline(address, CACHELINE_SIZE, k, v.size) {
+                    v.change_state(StoreState::Flushed);
+                    flushed_stores += 1;
+                    self.fences_pending.insert(k, v);
+                    self.flushes_pending.remove(&k);
+                } else if Self::store_is_partially_inside_cacheline(
+                    address,
+                    CACHELINE_SIZE,
+                    k,
+                    v.size,
+                ) {
+                    if v.state == StoreState::Modified {
+                        v.change_state(StoreState::PartiallyFlushed);
+                    } else if v.state == StoreState::PartiallyFlushed {
+                        self.fences_pending.insert(k, v);
+                        self.flushes_pending.remove(&k);
+                    }
+                    flushed_stores += 1;
+                }
+            }
+        }
+
+        self.flushes += 1;
+        self.implicit_flushes += flushed_stores;
+
+        if flushed_stores > 0 {
+            match mnemonic.as_ref() {
+                "clflushopt" | "clwb" => self.unordered_flushes += 1,
+                _ => (),
+            }
+        } else {
+            self.bugs
+                .push(Bug::new(BugType::RedundantFlush, checkpoint_id, id));
+        }
+    }
+
+    fn check_remainder(&mut self) {
+        for (_, store) in &self.flushes_pending {
+            self.bugs.push(Bug::new(
+                BugType::MissingFlush,
+                store.checkpoint_id,
+                store.instruction_id,
+            ));
+        }
+        for (_, store) in &self.fences_pending {
+            self.bugs.push(Bug::new(
+                BugType::MissingFence,
+                store.checkpoint_id,
+                store.instruction_id,
+            ));
+        }
+        self.fences_pending.clear();
+        self.fences_pending.clear();
+    }
+
+    pub fn get_bugs(&self) -> Vec<Bug> {
+        self.bugs.clone()
     }
 }
 
@@ -763,7 +1104,7 @@ impl GenericCrashImageGenerator {
     }
 
     /// Replay the generated trace and generate crash images.
-    pub fn replay(&mut self) -> Result<usize> {
+    pub fn replay(&mut self, trace_analysis: bool) -> Result<(usize, Vec<TraceAnalysisEntry>)> {
         use std::collections::hash_map::Entry;
 
         let mut current_writes = false;
@@ -771,6 +1112,7 @@ impl GenericCrashImageGenerator {
         let mut last_hypercall_checkpoint: isize = -1;
         let mut pre_failure_success = false;
         let mut checkpoint_ids: HashMap<isize, usize> = HashMap::new();
+        let mut trace_entry_vec = Vec::new();
 
         let checkpoint_range = self
             .test_config
@@ -798,23 +1140,36 @@ impl GenericCrashImageGenerator {
         self.timing_start_crash_image_generation = Instant::now();
 
         for entry in processed_trace {
-            match entry? {
-                // Only account for flushes when using the FPT
-                TraceEntry::Flush { id, metadata, .. }
-                    if matches!(self.generator_config, CrashImageGenerator::FailurePointTree) =>
-                {
-                    if current_writes && within_checkpoint_range(last_hypercall_checkpoint) {
-                        self.insert_crash_image(
-                            id,
-                            &replayer_mem.borrow(),
+            let trace_entry = entry?;
+            match trace_entry.clone() {
+                TraceEntry::Flush { id, metadata, .. } => {
+                    if trace_analysis && within_checkpoint_range(last_hypercall_checkpoint) {
+                        trace_entry_vec.push(TraceAnalysisEntry::new(
                             last_hypercall_checkpoint,
-                            Some(&metadata.kernel_stacktrace),
-                        )?;
-                        current_writes = false;
-                        fences_or_flushes_with_writes += 1;
+                            trace_entry,
+                        ));
+                    }
+                    if current_writes && within_checkpoint_range(last_hypercall_checkpoint) {
+                        // Only insert crash images for flushes when using the FPT
+                        if let CrashImageGenerator::FailurePointTree = self.generator_config {
+                            self.insert_crash_image(
+                                id,
+                                &replayer_mem.borrow(),
+                                last_hypercall_checkpoint,
+                                Some(&metadata.kernel_stacktrace),
+                            )?;
+                            current_writes = false;
+                            fences_or_flushes_with_writes += 1;
+                        }
                     }
                 }
                 TraceEntry::Fence { id, metadata, .. } => {
+                    if trace_analysis && within_checkpoint_range(last_hypercall_checkpoint) {
+                        trace_entry_vec.push(TraceAnalysisEntry::new(
+                            last_hypercall_checkpoint,
+                            trace_entry,
+                        ));
+                    }
                     if current_writes && within_checkpoint_range(last_hypercall_checkpoint) {
                         self.insert_crash_image(
                             id,
@@ -827,6 +1182,12 @@ impl GenericCrashImageGenerator {
                     }
                 }
                 TraceEntry::Write { .. } => {
+                    if trace_analysis && within_checkpoint_range(last_hypercall_checkpoint) {
+                        trace_entry_vec.push(TraceAnalysisEntry::new(
+                            last_hypercall_checkpoint,
+                            trace_entry,
+                        ));
+                    }
                     current_writes = true;
                 }
                 TraceEntry::Hypercall {
@@ -872,7 +1233,7 @@ impl GenericCrashImageGenerator {
         serde_yaml::to_writer(&index_file, &self.crash_images)
             .context("failed writing crash_images/index.yaml")?;
 
-        Ok(fences_or_flushes_with_writes)
+        Ok((fences_or_flushes_with_writes, trace_entry_vec))
     }
 
     /// Extract the semantic state of each crash image.

@@ -15,7 +15,7 @@ pub struct Metadata {
     pub kernel_stacktrace: Vec<u64>,
 }
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Debug, Encode, Decode, Clone)]
 pub enum TraceEntry {
     Write {
         id: usize,
