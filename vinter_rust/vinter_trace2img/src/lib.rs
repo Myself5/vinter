@@ -533,7 +533,7 @@ impl GenericCrashImageGenerator {
                     // give the stack a common root (0)
                     let mut vec = Vec::from([0]);
                     vec.extend_from_slice(callstack);
-                    if !FailurePointTree::add(&mut self.failure_point_tree, &vec, vec.len()) {
+                    if !self.failure_point_tree.add(&vec, vec.len()) {
                         // This specific callstack is already included, skip
                         return Ok(());
                     }
