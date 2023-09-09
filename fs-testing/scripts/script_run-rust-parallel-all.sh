@@ -4,7 +4,7 @@ set -eu -o pipefail
 script=$0
 scriptdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 base=$scriptdir/../..
-results=results
+results=results/run_rust_parellel_all
 
 rm -rf "$results"
 mkdir -p "$results"
@@ -68,7 +68,7 @@ for vm in "${vms[@]}"; do
 
 		jq -s "add" $results/rust_parallel_results.json $results/empty_vm.json >$results/rust_parallel_results.json.tmp && mv $results/rust_parallel_results.json.tmp $results/rust_parallel_results.json
 
-		find "$scriptdir" -name "test_*.yaml" | xargs -Ipath basename path .yaml | xargs -Itestname -P "$parallel" "$base/target/release/vinter_trace2img" analyze -g${generator} --json "${options[@]}" --output-dir "$results/testname" "$scriptdir/$vm.yaml" "$scriptdir/testname.yaml" | tee /dev/tty | sed 's/"/\\"/g' | xargs -d'\n' -I fulljsonstring bash -c "j=\"fulljsonstring\"; jq \".${vm//[^[:alnum:]]/_}.results += [\"\$j\"]\" $results/rust_parallel_results.json > $results/rust_parallel_results.json.tmp && mv $results/rust_parallel_results.json.tmp $results/rust_parallel_results.json"
+		find "$scriptdir" -name "test_*.yaml" | xargs -Ipath basename path .yaml | xargs -Itestname -P "$parallel" "$base/target/release/vinter_trace2img" analyze -g${generator} --json "${options[@]}" --output-dir "$results" "$scriptdir/$vm.yaml" "$scriptdir/testname.yaml" | tee /dev/tty | sed 's/"/\\"/g' | xargs -d'\n' -I fulljsonstring bash -c "j=\"fulljsonstring\"; jq \".${vm//[^[:alnum:]]/_}.results += [\"\$j\"]\" $results/rust_parallel_results.json > $results/rust_parallel_results.json.tmp && mv $results/rust_parallel_results.json.tmp $results/rust_parallel_results.json"
 
 		t=$(jq "[.${vm//[^[:alnum:]]/_} | .results[] | .trace_ms] | reduce .[] as \$num (0; .+\$num)" $results/rust_parallel_results.json)
 
@@ -86,6 +86,6 @@ for vm in "${vms[@]}"; do
 
 		jq ".${vm//[^[:alnum:]]/_}.results = $sorted_results" $results/rust_parallel_results.json >$results/rust_parallel_results.json.tmp && mv $results/rust_parallel_results.json.tmp $results/rust_parallel_results.json
 	else
-		find "$scriptdir" -name "test_*.yaml" | xargs -Ipath basename path .yaml | xargs -Itestname -P "$parallel" "$base/target/release/vinter_trace2img" analyze -g${generator} "${options[@]}" --output-dir "$results/testname" "$scriptdir/$vm.yaml" "$scriptdir/testname.yaml"
+		find "$scriptdir" -name "test_*.yaml" | xargs -Ipath basename path .yaml | xargs -Itestname -P "$parallel" "$base/target/release/vinter_trace2img" analyze -g${generator} "${options[@]}" --output-dir "$results" "$scriptdir/$vm.yaml" "$scriptdir/testname.yaml"
 	fi
 done
