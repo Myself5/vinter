@@ -43,20 +43,23 @@ impl FailurePointTree {
         }
     }
 
-    // Returns "Path Found" if the full path is contained and Errors on the last link if not
-    // Only used in the example/testing
-    pub fn contains(&self, addr: &[u64], length: usize) -> Result<bool, FPTraceLink> {
+    // Returns true/false if the full path is contained and on the last common link if not
+    // Only used in Testing
+    pub fn contains(&self, addr: &[u64], length: usize) -> (bool, FPTraceLink) {
+        if self.size < 1 {
+            return (false, None);
+        }
         if unsafe { (*self.root.unwrap().as_ptr()).addr } == addr[0] {
             if length > 1 {
                 if let (_, Some(p)) = self.contains_root(self.root, 1, &addr[1..], length - 1) {
-                    return Err(Some(p));
+                    return (false, Some(p));
                 }
             }
-            return Ok(true);
+            return (true, None);
         }
 
         // Tree does not share a common root
-        Err(None)
+        (false, None)
     }
 
     fn contains_root(

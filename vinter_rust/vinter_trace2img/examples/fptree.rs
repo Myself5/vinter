@@ -34,9 +34,8 @@ fn main() {
 
     println!("\n\nCheck if tree contains a specific leaf and get it's path:\n");
     let path = tree.get_path_from_addr(leaf);
-    if let Ok(x) = tree.contains(&t7, t7.len()) {
-        println!("Path Contained: {}", x);
-    }
+    let (x, _) = tree.contains(&t7, t7.len());
+    println!("Path Contained: {}", x);
     let leaf_addr;
     let visited;
     unsafe {
