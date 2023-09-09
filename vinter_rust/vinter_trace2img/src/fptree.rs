@@ -1,4 +1,6 @@
 use std::ptr::NonNull;
+
+use crate::Bug;
 type FPTraceLink = Option<NonNull<FPTraceAddr>>;
 
 #[derive(Debug, Clone)]
@@ -7,15 +9,22 @@ pub struct FPTraceAddr {
     visited: bool,
     children: Vec<FPTraceLink>,
     parent: FPTraceLink,
+    bug_entries: Option<Vec<Bug>>,
 }
 
 impl FPTraceAddr {
-    pub fn new(addr: u64, children: Vec<FPTraceLink>, parent: FPTraceLink) -> FPTraceAddr {
+    pub fn new(
+        addr: u64,
+        children: Vec<FPTraceLink>,
+        parent: FPTraceLink,
+        bug_entry: Option<Vec<Bug>>,
+    ) -> FPTraceAddr {
         FPTraceAddr {
             addr,
             visited: false,
             children,
             parent,
+            bug_entries: bug_entry,
         }
     }
 
@@ -32,6 +41,7 @@ pub struct FailurePointTree {
     size: usize,
     leaves: usize,
     root: FPTraceLink,
+    trace_analysis: bool,
 }
 
 impl FailurePointTree {
@@ -40,7 +50,12 @@ impl FailurePointTree {
             size: 0,
             leaves: 0,
             root: None,
+            trace_analysis: false,
         }
+    }
+
+    pub fn set_trace_analysis(&mut self, ta: bool) {
+        self.trace_analysis = ta;
     }
 
     // Returns true/false if the full path is contained and on the last common link if not
@@ -51,7 +66,9 @@ impl FailurePointTree {
         }
         if unsafe { (*self.root.unwrap().as_ptr()).addr } == addr[0] {
             if length > 1 {
-                if let (_, Some(p)) = self.contains_root(self.root, 1, &addr[1..], length - 1) {
+                if let (_, Some(p), _) =
+                    self.contains_root(self.root, 1, &addr[1..], length - 1, None)
+                {
                     return (false, Some(p));
                 }
             }
@@ -68,29 +85,63 @@ impl FailurePointTree {
         depth: usize,
         addr: &[u64],
         length: usize,
-    ) -> (usize, FPTraceLink) {
+        bug_entry: Option<Bug>,
+    ) -> (usize, FPTraceLink, bool) {
         for child in unsafe { (*root.unwrap().as_ptr()).children.to_vec() } {
             if unsafe { (*child.unwrap().as_ptr()).addr } == addr[0] {
                 if length > 1 {
-                    return self.contains_root(child, depth + 1, &addr[1..], length - 1);
+                    return self.contains_root(child, depth + 1, &addr[1..], length - 1, bug_entry);
                 } else {
                     // the call-stack is already fully included
-                    return (depth, None);
+                    let mut bug_added = false;
+
+                    if self.trace_analysis {
+                        bug_added = true;
+                        if let Some(bug_unwrapped) = bug_entry {
+                            for bug in
+                                unsafe { (*root.unwrap().as_ptr()).bug_entries.clone().unwrap() }
+                            {
+                                if bug.bug_type == bug_unwrapped.bug_type
+                                    && bug.checkpoint == bug_unwrapped.checkpoint
+                                {
+                                    bug_added = false;
+                                }
+                            }
+
+                            if bug_added {
+                                unsafe {
+                                    (*root.unwrap().as_ptr())
+                                        .bug_entries
+                                        .as_mut()
+                                        .unwrap()
+                                        .push(bug_unwrapped);
+                                }
+                            }
+                        } else {
+                            bug_added = false;
+                        }
+                    }
+
+                    return (depth, None, bug_added);
                 }
             }
         }
         // If there's no child with the matching address, return the last common Link
-        (depth, root)
+        (depth, root, false)
+    }
+
+    pub fn add(&mut self, addr: &[u64], length: usize) -> bool {
+        self.add_bug(addr, length, None)
     }
 
     // Return true if the stack has been added to the tree, false if not or if it has been included before
-    pub fn add(&mut self, addr: &[u64], length: usize) -> bool {
+    pub fn add_bug(&mut self, addr: &[u64], length: usize, bug_entry: Option<Bug>) -> bool {
         if length <= 0 {
             return false;
         }
         if let Some(root) = self.root {
             if unsafe { (*root.as_ptr()).addr } == addr[0] {
-                return self.add_to_parent(Some(root), &addr[1..], length - 1);
+                return self.add_to_parent(Some(root), &addr[1..], length - 1, bug_entry);
             } else {
                 return false; // Otherwise there is no common root -> Something is wrong
             }
@@ -102,36 +153,52 @@ impl FailurePointTree {
                     addr[0],
                     Vec::new(),
                     None,
+                    None,
                 ))));
             } // unsafe
             self.root = Some(new_entry);
             self.size += 1;
-            return self.add_to_parent(Some(new_entry), &addr[1..], length - 1);
+            return self.add_to_parent(Some(new_entry), &addr[1..], length - 1, bug_entry);
         }
     }
 
     // Return true if the stack has been added to the tree, false if not or if it has been included before
-    fn add_to_parent(&mut self, parent: FPTraceLink, addr: &[u64], length: usize) -> bool {
+    fn add_to_parent(
+        &mut self,
+        parent: FPTraceLink,
+        addr: &[u64],
+        length: usize,
+        bug_entry: Option<Bug>,
+    ) -> bool {
         if length <= 0 {
             return false;
         }
 
-        let next_parent_search = self.contains_root(parent, 1, addr, length);
+        let next_parent_search = self.contains_root(parent, 1, addr, length, bug_entry.clone());
 
         match next_parent_search {
-            (_, None) => return false, //No action needed, the path is already contained
-            (d, Some(parent)) => {
+            (_, None, bug_added) => return bug_added, //No action needed, the path is already contained
+            (d, Some(parent), _) => {
                 let next_parent;
                 unsafe {
                     next_parent = Some(NonNull::new_unchecked(Box::into_raw(Box::new(
-                        FPTraceAddr::new(addr[d - 1], Vec::new(), Some(parent)),
+                        FPTraceAddr::new(
+                            addr[d - 1],
+                            Vec::new(),
+                            Some(parent),
+                            if self.trace_analysis {
+                                Some(Vec::from([bug_entry.clone().unwrap()]))
+                            } else {
+                                None
+                            },
+                        ),
                     ))));
                     (*parent.as_ptr()).children.push(next_parent);
                 } // unsafe
 
                 self.size += 1;
                 if length - d > 0 {
-                    return self.add_to_parent(next_parent, &addr[d..], length - d);
+                    return self.add_to_parent(next_parent, &addr[d..], length - d, bug_entry);
                 } else {
                     self.leaves += 1;
                     return true;
@@ -252,3 +319,4 @@ impl FailurePointTree {
         }
     }
 }
+ 

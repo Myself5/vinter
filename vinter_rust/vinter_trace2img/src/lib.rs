@@ -62,7 +62,7 @@ impl TraceAnalysisEntry {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BugType {
     RedundantFlush,
     RedundantFence,
@@ -75,26 +75,19 @@ pub enum BugType {
     None,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Bug {
     bug_type: BugType,
     checkpoint: isize,
     id: usize,
-    kernel_stacktrace: Vec<u64>,
 }
 
 impl Bug {
-    pub fn new(
-        bug_type: BugType,
-        id: usize,
-        checkpoint: isize,
-        kernel_stacktrace: Vec<u64>,
-    ) -> Bug {
+    pub fn new(bug_type: BugType, checkpoint: isize, id: usize) -> Bug {
         Bug {
             bug_type,
             checkpoint,
             id,
-            kernel_stacktrace,
         }
     }
 }
@@ -138,10 +131,19 @@ pub struct TraceAnalyzer {
     unordered_flushes: usize,
     timing_start_trace_analysis: Instant,
     timing_end_trace_analysis: Instant,
+    failure_point_tree: FailurePointTree,
+}
+
+fn get_zero_vec(addr: Vec<u64>) -> Vec<u64> {
+    let mut vec = Vec::from([0]);
+    vec.extend_from_slice(&addr[..]);
+    vec
 }
 
 impl TraceAnalyzer {
     pub fn new() -> TraceAnalyzer {
+        let mut failure_point_tree = FailurePointTree::new();
+        failure_point_tree.set_trace_analysis(true);
         TraceAnalyzer {
             fences_pending: HashMap::new(),
             flushes_pending: HashMap::new(),
@@ -151,6 +153,7 @@ impl TraceAnalyzer {
             unordered_flushes: 0,
             timing_start_trace_analysis: Instant::now(),
             timing_end_trace_analysis: Instant::now(),
+            failure_point_tree,
         }
     }
 
@@ -226,7 +229,9 @@ impl TraceAnalyzer {
                     size,
                     non_temporal,
                     ..
-                } => self.process_trace_entry_write(address, size, non_temporal, id, entry),
+                } => {
+                    self.process_trace_entry_write(address, size, non_temporal, id, entry);
+                }
                 TraceEntry::Fence { id, .. } => self.process_trace_entry_fence(id, entry),
                 TraceEntry::Flush {
                     id,
@@ -374,22 +379,12 @@ impl TraceAnalyzer {
 
     // Use the Failure Point tree to deduplicate bugs
     fn add_bug(&mut self, bug_type: BugType, id: usize, entry: TraceAnalysisEntry) {
-        let bug = Bug::new(bug_type, id, entry.checkpoint_id, entry.kernel_stacktrace);
-
-        let mut is_contained = false;
-
-        // Check if the same bug type and and stacktrace is already contained for this checkpoint
-        for contained_bug in self.bugs.clone() {
-            if contained_bug.bug_type == bug.bug_type
-                && contained_bug.checkpoint == bug.checkpoint
-                && contained_bug.kernel_stacktrace == bug.kernel_stacktrace
-            {
-                is_contained = true;
-                break;
-            }
-        }
-
-        if !is_contained {
+        let bug = Bug::new(bug_type.clone(), entry.checkpoint_id, id);
+        let zero_vec = get_zero_vec(entry.kernel_stacktrace);
+        if self
+            .failure_point_tree
+            .add_bug(&zero_vec, zero_vec.len(), Some(bug.clone()))
+        {
             self.bugs.push(bug);
         }
     }
@@ -401,7 +396,6 @@ impl TraceAnalyzer {
     pub fn get_timing_end_trace_analysis(&self) -> Instant {
         self.timing_end_trace_analysis
     }
-
 }
 
 pub struct MemoryReplayer {
@@ -879,7 +873,7 @@ impl GenericCrashImageGenerator {
         fence_id: usize,
         mem: &X86PersistentMemory,
         checkpoint_id: isize,
-        callstack_option: Option<&[u64]>,
+        callstack_option: Option<Vec<u64>>,
     ) -> Result<()> {
         use std::collections::hash_map::Entry;
         macro_rules! image_entry {
@@ -901,9 +895,8 @@ impl GenericCrashImageGenerator {
             match callstack_option {
                 Some(callstack) => {
                     // give the stack a common root (0)
-                    let mut vec = Vec::from([0]);
-                    vec.extend_from_slice(callstack);
-                    if !self.failure_point_tree.add(&vec, vec.len()) {
+                    let zero_vec = get_zero_vec(callstack);
+                    if !self.failure_point_tree.add(&zero_vec, zero_vec.len()) {
                         // This specific callstack is already included, skip
                         return Ok(());
                     }
@@ -1186,7 +1179,7 @@ impl GenericCrashImageGenerator {
                                 id,
                                 &replayer_mem.borrow(),
                                 last_hypercall_checkpoint,
-                                Some(&metadata.kernel_stacktrace),
+                                Some(metadata.kernel_stacktrace),
                             )?;
                             current_writes = false;
                             fences_or_flushes_with_writes += 1;
@@ -1206,7 +1199,7 @@ impl GenericCrashImageGenerator {
                             id,
                             &replayer_mem.borrow(),
                             last_hypercall_checkpoint,
-                            Some(&metadata.kernel_stacktrace),
+                            Some(metadata.kernel_stacktrace),
                         )?;
                         current_writes = false;
                         fences_or_flushes_with_writes += 1;
