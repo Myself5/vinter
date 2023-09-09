@@ -62,7 +62,7 @@ impl TraceAnalysisEntry {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum BugType {
     RedundantFlush,
     RedundantFence,
@@ -75,7 +75,7 @@ pub enum BugType {
     None,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Bug {
     bug_type: BugType,
     checkpoint: isize,
@@ -123,6 +123,7 @@ impl Store {
 }
 
 pub struct TraceAnalyzer {
+    output_dir: PathBuf,
     fences_pending: HashMap<usize, Store>,
     flushes_pending: HashMap<usize, Store>,
     bugs: Vec<Bug>,
@@ -141,10 +142,11 @@ fn get_zero_vec(addr: Vec<u64>) -> Vec<u64> {
 }
 
 impl TraceAnalyzer {
-    pub fn new() -> TraceAnalyzer {
+    pub fn new(output_dir: PathBuf) -> TraceAnalyzer {
         let mut failure_point_tree = FailurePointTree::new();
         failure_point_tree.set_trace_analysis(true);
         TraceAnalyzer {
+            output_dir,
             fences_pending: HashMap::new(),
             flushes_pending: HashMap::new(),
             bugs: Vec::new(),
@@ -219,7 +221,10 @@ impl TraceAnalyzer {
         (store_addr >= flush_addr) && (store_addr + store_size <= flush_addr + flush_size)
     }
 
-    pub fn analyze_trace(&mut self, trace_entry_vec: Vec<TraceAnalysisEntry>) -> (usize, usize) {
+    pub fn analyze_trace(
+        &mut self,
+        trace_entry_vec: Vec<TraceAnalysisEntry>,
+    ) -> Result<(usize, usize)> {
         self.timing_start_trace_analysis = Instant::now();
         let ta_entries = trace_entry_vec.len();
         for entry in trace_entry_vec {
@@ -246,8 +251,11 @@ impl TraceAnalyzer {
 
         self.check_remainder();
 
+        let ta_bugs_file = File::create(self.output_dir.join("ta_bugs.yaml"))?;
+        serde_yaml::to_writer(&ta_bugs_file, &self.bugs).context("failed writing ta_bugs.yaml")?;
+
         self.timing_end_trace_analysis = Instant::now();
-        (self.bugs.len(), ta_entries)
+        Ok((self.bugs.len(), ta_entries))
     }
 
     fn process_trace_entry_write(
@@ -715,6 +723,10 @@ impl GenericCrashImageGenerator {
             timing_start_semantic_state_generation: Instant::now(),
             timing_end_semantic_state_generation: Instant::now(),
         })
+    }
+
+    pub fn get_output_dir(&self) -> PathBuf {
+        self.output_dir.clone()
     }
 
     /// Start a VM and trace test execution.

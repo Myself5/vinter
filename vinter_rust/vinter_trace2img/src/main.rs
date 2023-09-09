@@ -170,12 +170,12 @@ fn main() -> Result<()> {
 
             let mut ta_bugs = 0;
             let mut ta_entries = 0;
-            let mut ta = TraceAnalyzer::new();
+            let mut ta = TraceAnalyzer::new(gen.get_output_dir());
             if trace_analysis {
                 if !json {
                     println!("Analyzing Trace...");
                 }
-                (ta_bugs, ta_entries) = ta.analyze_trace(trace_entries);
+                (ta_bugs, ta_entries) = ta.analyze_trace(trace_entries)?;
             }
 
             if !json {
