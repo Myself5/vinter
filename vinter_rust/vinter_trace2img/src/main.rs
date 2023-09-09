@@ -152,6 +152,7 @@ fn main() -> Result<()> {
                 output_dir.unwrap_or(PathBuf::from(".")),
                 gen_config,
                 json,
+                trace_analysis,
             )?;
 
             if !json {
@@ -163,7 +164,7 @@ fn main() -> Result<()> {
                 println!("Pre-failure trace finished. Replaying trace...");
             }
             let (fences_with_writes, trace_entries) =
-                gen.replay(trace_analysis).context("replay failed")?;
+                gen.replay().context("replay failed")?;
 
             let mut ta_bugs = 0;
             let trace_analysis_start = Instant::now();

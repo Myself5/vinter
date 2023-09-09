@@ -41,21 +41,28 @@ impl Mmss for std::time::Duration {
     }
 }
 
+#[derive(Clone)]
 pub struct TraceAnalysisEntry {
     checkpoint_id: isize,
     trace_entry: TraceEntry,
+    kernel_stacktrace: Vec<u64>,
 }
 
 impl TraceAnalysisEntry {
-    fn new(checkpoint_id: isize, trace_entry: TraceEntry) -> TraceAnalysisEntry {
+    fn new(
+        checkpoint_id: isize,
+        trace_entry: TraceEntry,
+        kernel_stacktrace: Vec<u64>,
+    ) -> TraceAnalysisEntry {
         TraceAnalysisEntry {
             checkpoint_id,
             trace_entry,
+            kernel_stacktrace,
         }
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum BugType {
     RedundantFlush,
     RedundantFence,
@@ -73,14 +80,21 @@ pub struct Bug {
     bug_type: BugType,
     checkpoint: isize,
     id: usize,
+    kernel_stacktrace: Vec<u64>,
 }
 
 impl Bug {
-    pub fn new(bug_type: BugType, checkpoint: isize, id: usize) -> Bug {
+    pub fn new(
+        bug_type: BugType,
+        id: usize,
+        checkpoint: isize,
+        kernel_stacktrace: Vec<u64>,
+    ) -> Bug {
         Bug {
             bug_type,
             checkpoint,
             id,
+            kernel_stacktrace,
         }
     }
 }
@@ -96,18 +110,18 @@ enum StoreState {
 #[derive(Clone)]
 struct Store {
     size: usize,
-    checkpoint_id: isize,
     instruction_id: usize,
     state: StoreState,
+    entry: TraceAnalysisEntry,
 }
 
 impl Store {
-    fn new(size: usize, checkpoint_id: isize, instruction_id: usize) -> Store {
+    fn new(size: usize, instruction_id: usize, entry: TraceAnalysisEntry) -> Store {
         Store {
             size,
-            checkpoint_id,
             instruction_id,
             state: StoreState::Modified,
+            entry,
         }
     }
     fn change_state(&mut self, new_state: StoreState) {
@@ -200,29 +214,21 @@ impl TraceAnalyzer {
 
     pub fn analyze_trace(&mut self, trace_entry_vec: Vec<TraceAnalysisEntry>) -> usize {
         for entry in trace_entry_vec {
-            match entry.trace_entry {
+            match entry.clone().trace_entry {
                 TraceEntry::Write {
                     id,
                     address,
                     size,
                     non_temporal,
                     ..
-                } => self.process_trace_entry_write(
-                    address,
-                    size,
-                    non_temporal,
-                    entry.checkpoint_id,
-                    id,
-                ),
-                TraceEntry::Fence { id, .. } => {
-                    self.process_trace_entry_fence(id, entry.checkpoint_id)
-                }
+                } => self.process_trace_entry_write(address, size, non_temporal, id, entry),
+                TraceEntry::Fence { id, .. } => self.process_trace_entry_fence(id, entry),
                 TraceEntry::Flush {
                     id,
                     mnemonic,
                     address,
                     ..
-                } => self.process_trace_entry_flush(&mnemonic, address, id, entry.checkpoint_id),
+                } => self.process_trace_entry_flush(&mnemonic, address, id, entry),
                 _ => (),
             }
         }
@@ -237,10 +243,10 @@ impl TraceAnalyzer {
         address: usize,
         size: usize,
         non_temporal: bool,
-        checkpoint_id: isize,
         id: usize,
+        entry: TraceAnalysisEntry,
     ) {
-        let mut write = Store::new(size, checkpoint_id, id);
+        let mut write = Store::new(size, id, entry);
         self.check_store_flush(address, size);
         self.check_store_fence(address, size);
         if non_temporal {
@@ -261,11 +267,7 @@ impl TraceAnalyzer {
             if Self::target_store_contains_source_store(k, v.size, address, write_end)
                 || Self::source_store_contains_target_store(k, v.size, address, write_end)
             {
-                self.bugs.push(Bug::new(
-                    BugType::OverwrittenUnfenced,
-                    v.checkpoint_id,
-                    v.instruction_id,
-                ));
+                self.add_bug(BugType::OverwrittenUnfenced, v.instruction_id, v.entry);
 
                 self.fences_pending.remove(&k);
             }
@@ -282,26 +284,20 @@ impl TraceAnalyzer {
             if Self::target_store_contains_source_store(k, v.size, address, write_end)
                 || Self::source_store_contains_target_store(k, v.size, address, write_end)
             {
-                self.bugs.push(Bug::new(
-                    BugType::OverwrittenUnflushed,
-                    v.checkpoint_id,
-                    v.instruction_id,
-                ));
+                self.add_bug(BugType::OverwrittenUnflushed, v.instruction_id, v.entry);
 
                 self.flushes_pending.remove(&k);
             }
         }
     }
 
-    fn process_trace_entry_fence(&mut self, id: usize, checkpoint_id: isize) {
+    fn process_trace_entry_fence(&mut self, id: usize, entry: TraceAnalysisEntry) {
         if self.fences_pending.len() == 0 {
-            self.bugs
-                .push(Bug::new(BugType::RedundantFence, checkpoint_id, id));
+            self.add_bug(BugType::RedundantFence, id, entry.clone());
         }
         self.fences_pending.clear();
         if self.unordered_flushes > 1 {
-            self.bugs
-                .push(Bug::new(BugType::UnorderedFlushes, checkpoint_id, id));
+            self.add_bug(BugType::UnorderedFlushes, id, entry);
         }
         self.unordered_flushes = 0;
     }
@@ -311,7 +307,7 @@ impl TraceAnalyzer {
         mnemonic: &String,
         address: usize,
         id: usize,
-        checkpoint_id: isize,
+        entry: TraceAnalysisEntry,
     ) {
         let mut flushed_stores = 0;
         let flush_end = address + CACHELINE_SIZE;
@@ -351,25 +347,16 @@ impl TraceAnalyzer {
                 _ => (),
             }
         } else {
-            self.bugs
-                .push(Bug::new(BugType::RedundantFlush, checkpoint_id, id));
+            self.add_bug(BugType::RedundantFlush, id, entry);
         }
     }
 
     fn check_remainder(&mut self) {
-        for (_, store) in &self.flushes_pending {
-            self.bugs.push(Bug::new(
-                BugType::MissingFlush,
-                store.checkpoint_id,
-                store.instruction_id,
-            ));
+        for (_, store) in self.flushes_pending.clone() {
+            self.add_bug(BugType::MissingFlush, store.instruction_id, store.entry);
         }
-        for (_, store) in &self.fences_pending {
-            self.bugs.push(Bug::new(
-                BugType::MissingFence,
-                store.checkpoint_id,
-                store.instruction_id,
-            ));
+        for (_, store) in self.fences_pending.clone() {
+            self.add_bug(BugType::MissingFence, store.instruction_id, store.entry);
         }
         self.fences_pending.clear();
         self.fences_pending.clear();
@@ -377,6 +364,28 @@ impl TraceAnalyzer {
 
     pub fn get_bugs(&self) -> Vec<Bug> {
         self.bugs.clone()
+    }
+
+    // Use the Failure Point tree to deduplicate bugs
+    fn add_bug(&mut self, bug_type: BugType, id: usize, entry: TraceAnalysisEntry) {
+        let bug = Bug::new(bug_type, id, entry.checkpoint_id, entry.kernel_stacktrace);
+
+        let mut is_contained = false;
+
+        // Check if the same bug type and and stacktrace is already contained for this checkpoint
+        for contained_bug in self.bugs.clone() {
+            if contained_bug.bug_type == bug.bug_type
+                && contained_bug.checkpoint == bug.checkpoint
+                && contained_bug.kernel_stacktrace == bug.kernel_stacktrace
+            {
+                is_contained = true;
+                break;
+            }
+        }
+
+        if !is_contained {
+            self.bugs.push(bug);
+        }
     }
 }
 
@@ -609,6 +618,7 @@ pub struct GenericCrashImageGenerator {
     pub semantic_states: HashMap<SemanticStateHash, SemanticState>,
     fail_recovery_silent: bool,
     failed_recovery_count: usize,
+    trace_analysis: bool,
     timing_start_trace: Instant,
     timing_start_crash_image_generation: Instant,
     timing_start_semantic_state_generation: Instant,
@@ -622,6 +632,7 @@ impl GenericCrashImageGenerator {
         mut output_dir: PathBuf,
         generator_config: CrashImageGenerator,
         fail_recovery_silent: bool,
+        trace_analysis: bool,
     ) -> Result<Self> {
         let vm_config: config::Config = {
             let f = File::open(&vm_config_path).context("could not open VM config file")?;
@@ -688,6 +699,7 @@ impl GenericCrashImageGenerator {
             semantic_states: HashMap::new(),
             fail_recovery_silent,
             failed_recovery_count: 0,
+            trace_analysis,
             timing_start_trace: Instant::now(),
             timing_start_crash_image_generation: Instant::now(),
             timing_start_semantic_state_generation: Instant::now(),
@@ -702,7 +714,9 @@ impl GenericCrashImageGenerator {
         let cmd = format!("cat /proc/uptime; cat /proc/uptime; cat /proc/uptime; {prefix} && {suffix} && hypercall success; cat /proc/uptime",
             prefix = self.vm_config.commands.get("trace_cmd_prefix").ok_or_else(|| anyhow!("missing trace_cmd_prefix in VM configuration"))?,
             suffix = self.test_config.trace_cmd_suffix);
-        let metadata_arg = if let CrashImageGenerator::FailurePointTree = self.generator_config {
+        let metadata_arg = if self.trace_analysis
+            || matches!(self.generator_config, CrashImageGenerator::FailurePointTree)
+        {
             Vec::from(["--metadata", "kernel_stacktrace"])
         } else {
             Vec::new()
@@ -1104,7 +1118,7 @@ impl GenericCrashImageGenerator {
     }
 
     /// Replay the generated trace and generate crash images.
-    pub fn replay(&mut self, trace_analysis: bool) -> Result<(usize, Vec<TraceAnalysisEntry>)> {
+    pub fn replay(&mut self) -> Result<(usize, Vec<TraceAnalysisEntry>)> {
         use std::collections::hash_map::Entry;
 
         let mut current_writes = false;
@@ -1143,10 +1157,11 @@ impl GenericCrashImageGenerator {
             let trace_entry = entry?;
             match trace_entry.clone() {
                 TraceEntry::Flush { id, metadata, .. } => {
-                    if trace_analysis && within_checkpoint_range(last_hypercall_checkpoint) {
+                    if self.trace_analysis && within_checkpoint_range(last_hypercall_checkpoint) {
                         trace_entry_vec.push(TraceAnalysisEntry::new(
                             last_hypercall_checkpoint,
                             trace_entry,
+                            metadata.kernel_stacktrace.clone(),
                         ));
                     }
                     if current_writes && within_checkpoint_range(last_hypercall_checkpoint) {
@@ -1164,10 +1179,11 @@ impl GenericCrashImageGenerator {
                     }
                 }
                 TraceEntry::Fence { id, metadata, .. } => {
-                    if trace_analysis && within_checkpoint_range(last_hypercall_checkpoint) {
+                    if self.trace_analysis && within_checkpoint_range(last_hypercall_checkpoint) {
                         trace_entry_vec.push(TraceAnalysisEntry::new(
                             last_hypercall_checkpoint,
                             trace_entry,
+                            metadata.kernel_stacktrace.clone(),
                         ));
                     }
                     if current_writes && within_checkpoint_range(last_hypercall_checkpoint) {
@@ -1181,11 +1197,12 @@ impl GenericCrashImageGenerator {
                         fences_or_flushes_with_writes += 1;
                     }
                 }
-                TraceEntry::Write { .. } => {
-                    if trace_analysis && within_checkpoint_range(last_hypercall_checkpoint) {
+                TraceEntry::Write { metadata, .. } => {
+                    if self.trace_analysis && within_checkpoint_range(last_hypercall_checkpoint) {
                         trace_entry_vec.push(TraceAnalysisEntry::new(
                             last_hypercall_checkpoint,
                             trace_entry,
+                            metadata.kernel_stacktrace.clone(),
                         ));
                     }
                     current_writes = true;
