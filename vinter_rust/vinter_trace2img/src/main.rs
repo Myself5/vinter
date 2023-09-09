@@ -66,7 +66,7 @@ enum Commands {
 struct JSONData {
     vm: String,
     test: String,
-    heuristic: String,
+    tech: String,
     fences: usize,
     crash_images: usize,
     semantic_states: usize,
@@ -143,7 +143,10 @@ fn main() -> Result<()> {
                 .to_str()
                 .unwrap()
                 .to_string();
-            let gen_config_name = gen_config.to_string();
+            let mut tech_config = gen_config.to_string();
+            if trace_analysis {
+                tech_config.push_str("+TA");
+            }
 
             let mut gen = GenericCrashImageGenerator::new(
                 vm_config,
@@ -247,7 +250,7 @@ fn main() -> Result<()> {
                 let json = JSONData {
                     vm,
                     test,
-                    heuristic: gen_config_name,
+                    tech: tech_config,
                     fences: fences_with_writes,
                     crash_images: gen.crash_images.len(),
                     semantic_states: gen.semantic_states.len(),

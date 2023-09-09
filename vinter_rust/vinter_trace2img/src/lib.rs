@@ -485,8 +485,8 @@ impl std::fmt::Display for CrashImageGenerator {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             CrashImageGenerator::None => write!(f, "None"),
-            CrashImageGenerator::Heuristic => write!(f, "Heuristic"),
-            CrashImageGenerator::FailurePointTree => write!(f, "FailurePointTree"),
+            CrashImageGenerator::Heuristic => write!(f, "Default"),
+            CrashImageGenerator::FailurePointTree => write!(f, "FPT"),
         }
     }
 }
