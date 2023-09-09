@@ -72,6 +72,7 @@ struct JSONData {
     semantic_states: usize,
     failed_recoveries: usize,
     ta_bugs: usize,
+    ta_entries: usize,
     trace_ms: u128,
     crash_image_ms: u128,
     trace_analysis_ms: u128,
@@ -168,12 +169,13 @@ fn main() -> Result<()> {
             let (fences_with_writes, trace_entries) = gen.replay().context("replay failed")?;
 
             let mut ta_bugs = 0;
+            let mut ta_entries = 0;
             let mut ta = TraceAnalyzer::new();
             if trace_analysis {
                 if !json {
                     println!("Analyzing Trace...");
                 }
-                ta_bugs = ta.analyze_trace(trace_entries);
+                (ta_bugs, ta_entries) = ta.analyze_trace(trace_entries);
             }
 
             if !json {
@@ -256,6 +258,7 @@ fn main() -> Result<()> {
                     semantic_states: gen.semantic_states.len(),
                     failed_recoveries: gen.get_failed_recovery_count(),
                     ta_bugs,
+                    ta_entries,
                     trace_ms: gen
                         .get_timing_start_crash_image_generation()
                         .duration_since(gen.get_timing_trace())

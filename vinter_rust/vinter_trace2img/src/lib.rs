@@ -219,8 +219,9 @@ impl TraceAnalyzer {
         (store_addr >= flush_addr) && (store_addr + store_size <= flush_addr + flush_size)
     }
 
-    pub fn analyze_trace(&mut self, trace_entry_vec: Vec<TraceAnalysisEntry>) -> usize {
+    pub fn analyze_trace(&mut self, trace_entry_vec: Vec<TraceAnalysisEntry>) -> (usize, usize) {
         self.timing_start_trace_analysis = Instant::now();
+        let ta_entries = trace_entry_vec.len();
         for entry in trace_entry_vec {
             match entry.clone().trace_entry {
                 TraceEntry::Write {
@@ -246,7 +247,7 @@ impl TraceAnalyzer {
         self.check_remainder();
 
         self.timing_end_trace_analysis = Instant::now();
-        self.bugs.len()
+        (self.bugs.len(), ta_entries)
     }
 
     fn process_trace_entry_write(
