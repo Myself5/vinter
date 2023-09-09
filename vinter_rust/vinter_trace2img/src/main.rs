@@ -199,6 +199,53 @@ fn main() -> Result<()> {
             }
             gen.extract_semantic_states()
                 .context("semantic state extraction failed")?;
+
+            let json_data = JSONData {
+                vm,
+                test,
+                tech: tech_config,
+                fences: fences_with_writes,
+                crash_images: gen.crash_images.len(),
+                semantic_states: gen.semantic_states.len(),
+                failed_recoveries: gen.get_failed_recovery_count(),
+                ta_bugs,
+                ta_entries,
+                trace_ms: gen
+                    .get_timing_start_crash_image_generation()
+                    .duration_since(gen.get_timing_trace())
+                    .as_millis(),
+                crash_image_ms: if trace_analysis {
+                    ta.get_timing_start_trace_analysis()
+                } else {
+                    gen.get_timing_start_semantic_state_generation()
+                }
+                .duration_since(gen.get_timing_start_crash_image_generation())
+                .as_millis(),
+                trace_analysis_ms: if trace_analysis {
+                    ta.get_timing_end_trace_analysis()
+                        .duration_since(ta.get_timing_start_trace_analysis())
+                        .as_millis()
+                } else {
+                    0
+                },
+                semantic_state_ms: gen
+                    .get_timing_end_semantic_state_generation()
+                    .duration_since(if trace_analysis {
+                        ta.get_timing_end_trace_analysis()
+                    } else {
+                        gen.get_timing_start_semantic_state_generation()
+                    })
+                    .as_millis(),
+                total_ms: gen
+                    .get_timing_end_semantic_state_generation()
+                    .duration_since(gen.get_timing_trace())
+                    .as_millis(),
+            };
+
+            let output_file = File::create(gen.get_output_dir().join("output.yaml"))?;
+            serde_yaml::to_writer(&output_file, &json_data)
+                .context("failed writing output.yaml")?;
+
             if !json {
                 println!(
                     "State extraction finished. {} unique states, {} failed recovery attempts.",
@@ -249,48 +296,7 @@ fn main() -> Result<()> {
                         .mmss()
                 );
             } else {
-                let json = JSONData {
-                    vm,
-                    test,
-                    tech: tech_config,
-                    fences: fences_with_writes,
-                    crash_images: gen.crash_images.len(),
-                    semantic_states: gen.semantic_states.len(),
-                    failed_recoveries: gen.get_failed_recovery_count(),
-                    ta_bugs,
-                    ta_entries,
-                    trace_ms: gen
-                        .get_timing_start_crash_image_generation()
-                        .duration_since(gen.get_timing_trace())
-                        .as_millis(),
-                    crash_image_ms: if trace_analysis {
-                        ta.get_timing_start_trace_analysis()
-                    } else {
-                        gen.get_timing_start_semantic_state_generation()
-                    }
-                    .duration_since(gen.get_timing_start_crash_image_generation())
-                    .as_millis(),
-                    trace_analysis_ms: if trace_analysis {
-                        ta.get_timing_end_trace_analysis()
-                            .duration_since(ta.get_timing_start_trace_analysis())
-                            .as_millis()
-                    } else {
-                        0
-                    },
-                    semantic_state_ms: gen
-                        .get_timing_end_semantic_state_generation()
-                        .duration_since(if trace_analysis {
-                            ta.get_timing_end_trace_analysis()
-                        } else {
-                            gen.get_timing_start_semantic_state_generation()
-                        })
-                        .as_millis(),
-                    total_ms: gen
-                        .get_timing_end_semantic_state_generation()
-                        .duration_since(gen.get_timing_trace())
-                        .as_millis(),
-                };
-                let serialized_json = serde_json::to_string(&json).unwrap();
+                let serialized_json = serde_json::to_string(&json_data).unwrap();
                 println!("{}", serialized_json);
             }
         }
