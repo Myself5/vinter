@@ -1,7 +1,6 @@
 use std::fs::File;
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
-use std::time::Instant;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -163,16 +162,14 @@ fn main() -> Result<()> {
             if !json {
                 println!("Pre-failure trace finished. Replaying trace...");
             }
-            let (fences_with_writes, trace_entries) =
-                gen.replay().context("replay failed")?;
+            let (fences_with_writes, trace_entries) = gen.replay().context("replay failed")?;
 
             let mut ta_bugs = 0;
-            let trace_analysis_start = Instant::now();
+            let mut ta = TraceAnalyzer::new();
             if trace_analysis {
                 if !json {
                     println!("Analyzing Trace...");
                 }
-                let mut ta = TraceAnalyzer::new();
                 ta_bugs = ta.analyze_trace(trace_entries);
             }
 
@@ -214,7 +211,7 @@ fn main() -> Result<()> {
                     println!(
                         "Crash Image Generation: {}",
                         if trace_analysis {
-                            trace_analysis_start
+                            ta.get_timing_start_trace_analysis()
                         } else {
                             gen.get_timing_start_semantic_state_generation()
                         }
@@ -224,31 +221,28 @@ fn main() -> Result<()> {
                     if trace_analysis {
                         println!(
                             "Trace Analysis: {}",
-                            gen.get_timing_start_semantic_state_generation()
-                                .duration_since(trace_analysis_start)
+                            ta.get_timing_end_trace_analysis()
+                                .duration_since(ta.get_timing_start_trace_analysis())
                                 .mmss(),
                         );
                     }
                     println!(
                         "Semantic State Extraction: {}",
                         gen.get_timing_end_semantic_state_generation()
-                            .duration_since(gen.get_timing_start_semantic_state_generation())
+                            .duration_since(if trace_analysis {
+                                ta.get_timing_end_trace_analysis()
+                            } else {
+                                gen.get_timing_start_semantic_state_generation()
+                            })
                             .mmss(),
                     );
-                    println!(
-                        "Total: {}",
-                        gen.get_timing_end_semantic_state_generation()
-                            .duration_since(gen.get_timing_trace())
-                            .mmss()
-                    );
-                } else {
-                    println!(
-                        "Total Duration: {}",
-                        gen.get_timing_end_semantic_state_generation()
-                            .duration_since(gen.get_timing_trace())
-                            .mmss()
-                    );
                 }
+                println!(
+                    "Total Duration: {}",
+                    gen.get_timing_end_semantic_state_generation()
+                        .duration_since(gen.get_timing_trace())
+                        .mmss()
+                );
             } else {
                 let json = JSONData {
                     vm,
@@ -264,22 +258,26 @@ fn main() -> Result<()> {
                         .duration_since(gen.get_timing_trace())
                         .as_millis(),
                     crash_image_ms: if trace_analysis {
-                        trace_analysis_start
+                        ta.get_timing_start_trace_analysis()
                     } else {
                         gen.get_timing_start_semantic_state_generation()
                     }
                     .duration_since(gen.get_timing_start_crash_image_generation())
                     .as_millis(),
                     trace_analysis_ms: if trace_analysis {
-                        gen.get_timing_start_semantic_state_generation()
-                            .duration_since(trace_analysis_start)
+                        ta.get_timing_end_trace_analysis()
+                            .duration_since(ta.get_timing_start_trace_analysis())
                             .as_millis()
                     } else {
                         0
                     },
                     semantic_state_ms: gen
                         .get_timing_end_semantic_state_generation()
-                        .duration_since(gen.get_timing_start_semantic_state_generation())
+                        .duration_since(if trace_analysis {
+                            ta.get_timing_end_trace_analysis()
+                        } else {
+                            gen.get_timing_start_semantic_state_generation()
+                        })
                         .as_millis(),
                     total_ms: gen
                         .get_timing_end_semantic_state_generation()

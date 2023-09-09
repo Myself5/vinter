@@ -136,6 +136,8 @@ pub struct TraceAnalyzer {
     flushes: usize,
     implicit_flushes: usize,
     unordered_flushes: usize,
+    timing_start_trace_analysis: Instant,
+    timing_end_trace_analysis: Instant,
 }
 
 impl TraceAnalyzer {
@@ -147,6 +149,8 @@ impl TraceAnalyzer {
             flushes: 0,
             implicit_flushes: 0,
             unordered_flushes: 0,
+            timing_start_trace_analysis: Instant::now(),
+            timing_end_trace_analysis: Instant::now(),
         }
     }
 
@@ -213,6 +217,7 @@ impl TraceAnalyzer {
     }
 
     pub fn analyze_trace(&mut self, trace_entry_vec: Vec<TraceAnalysisEntry>) -> usize {
+        self.timing_start_trace_analysis = Instant::now();
         for entry in trace_entry_vec {
             match entry.clone().trace_entry {
                 TraceEntry::Write {
@@ -235,6 +240,7 @@ impl TraceAnalyzer {
 
         self.check_remainder();
 
+        self.timing_end_trace_analysis = Instant::now();
         self.bugs.len()
     }
 
@@ -387,6 +393,15 @@ impl TraceAnalyzer {
             self.bugs.push(bug);
         }
     }
+
+    pub fn get_timing_start_trace_analysis(&self) -> Instant {
+        self.timing_start_trace_analysis
+    }
+
+    pub fn get_timing_end_trace_analysis(&self) -> Instant {
+        self.timing_end_trace_analysis
+    }
+
 }
 
 pub struct MemoryReplayer {
