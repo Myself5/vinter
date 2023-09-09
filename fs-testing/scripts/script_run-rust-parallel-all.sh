@@ -81,6 +81,10 @@ for vm in "${vms[@]}"; do
 		f=$(jq "[.${vm//[^[:alnum:]]/_} | .results[] | .total_ms] | reduce .[] as \$num (0; .+\$num)" $results/rust_parallel_results.json)
 
 		jq ".${vm//[^[:alnum:]]/_} += {trace_ms: $t,crash_image_ms: $c,trace_analysis_ms: $ta,semantic_state_ms: $s,full_run_ms: $f}" $results/rust_parallel_results.json >$results/rust_parallel_results.json.tmp && mv $results/rust_parallel_results.json.tmp $results/rust_parallel_results.json
+
+		sorted_results=$(jq ".${vm//[^[:alnum:]]/_}.results | sort_by(.test)" $results/rust_parallel_results.json)
+
+		jq ".${vm//[^[:alnum:]]/_}.results = $sorted_results" $results/rust_parallel_results.json >$results/rust_parallel_results.json.tmp && mv $results/rust_parallel_results.json.tmp $results/rust_parallel_results.json
 	else
 		find "$scriptdir" -name "test_*.yaml" | xargs -Ipath basename path .yaml | xargs -Itestname -P "$parallel" "$base/target/release/vinter_trace2img" analyze -g${generator} "${options[@]}" --output-dir "$results/testname" "$scriptdir/$vm.yaml" "$scriptdir/testname.yaml"
 	fi
