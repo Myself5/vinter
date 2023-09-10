@@ -266,48 +266,34 @@ impl TraceAnalyzer {
         id: usize,
         entry: TraceAnalysisEntry,
     ) {
+        macro_rules! check_store {
+            ($address:expr; $write_end:expr; $group:expr; $bug_type:expr) => {
+                let mut retained_group = $group.clone();
+                retained_group.retain(|&k, _| k >= address && k < $write_end);
+
+                for (k, v) in retained_group {
+                    if Self::target_store_contains_source_store(k, v.size, address, $write_end)
+                        || Self::source_store_contains_target_store(k, v.size, address, $write_end)
+                    {
+                        self.add_bug($bug_type, v.instruction_id, v.entry);
+
+                        $group.remove(&k);
+                    }
+                }
+            };
+        }
+
+        let write_end = address + size;
+        check_store!(address; write_end; self.flushes_pending; BugType::OverwrittenUnflushed);
+        check_store!(address; write_end; self.fences_pending; BugType::OverwrittenUnfenced);
+
         let mut write = Store::new(size, id, entry);
-        self.check_store_flush(address, size);
-        self.check_store_fence(address, size);
+
         if non_temporal {
             write.change_state(StoreState::Flushed);
             self.fences_pending.insert(address, write);
         } else {
             self.flushes_pending.insert(address, write);
-        }
-    }
-
-    fn check_store_fence(&mut self, address: usize, size: usize) {
-        let write_end = address + size;
-
-        let mut retained_group = self.fences_pending.clone();
-        retained_group.retain(|&k, _| k >= address && k < write_end);
-
-        for (k, v) in retained_group {
-            if Self::target_store_contains_source_store(k, v.size, address, write_end)
-                || Self::source_store_contains_target_store(k, v.size, address, write_end)
-            {
-                self.add_bug(BugType::OverwrittenUnfenced, v.instruction_id, v.entry);
-
-                self.fences_pending.remove(&k);
-            }
-        }
-    }
-
-    fn check_store_flush(&mut self, address: usize, size: usize) {
-        let write_end = address + size;
-
-        let mut retained_group = self.flushes_pending.clone();
-        retained_group.retain(|&k, _| k >= address && k < write_end);
-
-        for (k, v) in retained_group {
-            if Self::target_store_contains_source_store(k, v.size, address, write_end)
-                || Self::source_store_contains_target_store(k, v.size, address, write_end)
-            {
-                self.add_bug(BugType::OverwrittenUnflushed, v.instruction_id, v.entry);
-
-                self.flushes_pending.remove(&k);
-            }
         }
     }
 
