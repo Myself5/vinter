@@ -30,9 +30,13 @@ enum Commands {
         #[clap(long)]
         skip: Option<usize>,
 
-        /// how many entries to show after start
+        /// how many entries to show after start (does not account for filter)
         #[clap(long)]
         count: Option<usize>,
+
+        /// comma seperated list of entries to filter. Options: all,read,write,fence,flush,hypercall
+        #[clap(long)]
+        filter: Option<String>,
     },
 }
 
@@ -85,6 +89,33 @@ fn print_frame(a2l: &addr2line::ObjectContext, addr: u64) {
     }
 }
 
+struct TraceFilter {
+    read: bool,
+    write: bool,
+    fence: bool,
+    flush: bool,
+    hypercall: bool,
+}
+
+impl TraceFilter {
+    fn new(initial_value: bool) -> TraceFilter {
+        TraceFilter {
+            read: initial_value,
+            write: initial_value,
+            fence: initial_value,
+            flush: initial_value,
+            hypercall: initial_value,
+        }
+    }
+    fn set_all(&mut self, new_value: bool) {
+        self.read = new_value;
+        self.write = new_value;
+        self.fence = new_value;
+        self.flush = new_value;
+        self.hypercall = new_value;
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -94,7 +125,62 @@ fn main() -> Result<()> {
             vmlinux,
             skip,
             count,
+            filter,
         } => {
+            macro_rules! print_kernel_stracktrace {
+                ($metadata:expr; $a2l:expr) => {
+                    if let Some(a2l) = &$a2l {
+                        if $metadata.in_kernel {
+                            print!("\tpc: ");
+                            print_frame(a2l, $metadata.pc);
+                            if !$metadata.kernel_stacktrace.is_empty() {
+                                println!("\tstack trace:");
+                                for (i, addr) in $metadata.kernel_stacktrace.iter().enumerate() {
+                                    print!("\t#{}: ", i + 1);
+                                    print_frame(a2l, *addr);
+                                }
+                            }
+                        }
+                    }
+                };
+            }
+
+            let trace_filter = if let Some(filter) = filter {
+                let mut tf = TraceFilter::new(false);
+
+                for entry in filter.split(",") {
+                    match entry {
+                        "all" => {
+                            tf.set_all(true);
+                            break;
+                        }
+                        "read" => {
+                            tf.read = true;
+                        }
+                        "write" => {
+                            tf.write = true;
+                        }
+                        "fence" => {
+                            tf.fence = true;
+                        }
+                        "flush" => {
+                            tf.flush = true;
+                        }
+                        "hypercall" => {
+                            tf.hypercall = true;
+                        }
+                        _ => {
+                            println!("Unsupported filter: {}", entry);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                tf
+            } else {
+                TraceFilter::new(true)
+            };
+
             let a2l = if let Some(vmlinux) = vmlinux {
                 Some(init_addr2line(&vmlinux)?)
             } else {
@@ -113,33 +199,44 @@ fn main() -> Result<()> {
             let mut current_count = 0;
 
             for entry in trace::parse_trace_file_bin(&mut file).skip(skip.unwrap_or(0)) {
-                if max_count > 0 && current_count >= max_count {
+                current_count += 1;
+                if max_count > 0 && current_count > max_count {
                     return Ok(());
                 }
 
-                current_count += 1;
-
                 let entry = entry?;
-                println!("{:?}", entry);
 
-                if let Some(a2l) = &a2l {
-                    match entry {
-                        TraceEntry::Write { metadata, .. }
-                        | TraceEntry::Fence { metadata, .. }
-                        | TraceEntry::Flush { metadata, .. } => {
-                            if metadata.in_kernel {
-                                print!("\tpc: ");
-                                print_frame(a2l, metadata.pc);
-                                if !metadata.kernel_stacktrace.is_empty() {
-                                    println!("\tstack trace:");
-                                    for (i, addr) in metadata.kernel_stacktrace.iter().enumerate() {
-                                        print!("\t#{}: ", i + 1);
-                                        print_frame(a2l, *addr);
-                                    }
-                                }
-                            }
+                match entry.clone() {
+                    TraceEntry::Write { metadata, .. } => {
+                        if trace_filter.write {
+                            println!("{:?}", entry);
+
+                            print_kernel_stracktrace!(metadata; a2l);
                         }
-                        _ => {}
+                    }
+                    TraceEntry::Fence { metadata, .. } => {
+                        if trace_filter.fence {
+                            println!("{:?}", entry);
+
+                            print_kernel_stracktrace!(metadata; a2l);
+                        }
+                    }
+                    TraceEntry::Flush { metadata, .. } => {
+                        if trace_filter.flush {
+                            println!("{:?}", entry);
+
+                            print_kernel_stracktrace!(metadata; a2l);
+                        }
+                    }
+                    TraceEntry::Read { .. } => {
+                        if trace_filter.read {
+                            println!("{:?}", entry);
+                        }
+                    }
+                    TraceEntry::Hypercall { .. } => {
+                        if trace_filter.hypercall {
+                            println!("{:?}", entry);
+                        }
                     }
                 }
             }
