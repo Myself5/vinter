@@ -29,6 +29,10 @@ enum Commands {
         /// how many entries to skip
         #[clap(long)]
         skip: Option<usize>,
+
+        /// how many entries to show after start
+        #[clap(long)]
+        count: Option<usize>,
     },
 }
 
@@ -89,6 +93,7 @@ fn main() -> Result<()> {
             trace,
             vmlinux,
             skip,
+            count,
         } => {
             let a2l = if let Some(vmlinux) = vmlinux {
                 Some(init_addr2line(&vmlinux)?)
@@ -96,7 +101,24 @@ fn main() -> Result<()> {
                 None
             };
             let mut file = BufReader::new(File::open(&trace).context("could not open trace file")?);
+
+            let max_count = if let Some(c) = count {
+                if c == 0 {
+                    println!("Invalid parameter: --count 0 will be ignored.");
+                }
+                c
+            } else {
+                0
+            };
+            let mut current_count = 0;
+
             for entry in trace::parse_trace_file_bin(&mut file).skip(skip.unwrap_or(0)) {
+                if max_count > 0 && current_count >= max_count {
+                    return Ok(());
+                }
+
+                current_count += 1;
+
                 let entry = entry?;
                 println!("{:?}", entry);
 
