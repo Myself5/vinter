@@ -60,6 +60,18 @@ enum Commands {
         /// Use Advanced Trace analysis to find performance and implementation bugs
         trace_analysis: bool,
     },
+    // Analyze a given Trace file
+    AnalyzeTrace {
+        // Path to trace file
+        #[clap(parse(from_os_str))]
+        trace_file: PathBuf,
+        /// Path to output directory. Default "."
+        #[clap(long, parse(from_os_str))]
+        output_dir: Option<PathBuf>,
+        #[clap(short, long)]
+        /// Create a JSON output instead of the default, human readable text
+        json: bool,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -77,6 +89,13 @@ struct JSONData {
     crash_image_ms: u128,
     trace_analysis_ms: u128,
     semantic_state_ms: u128,
+    total_ms: u128,
+}
+
+#[derive(Debug, Serialize)]
+struct TAJSONData {
+    ta_bugs: usize,
+    ta_entries: usize,
     total_ms: u128,
 }
 
@@ -166,16 +185,16 @@ fn main() -> Result<()> {
             if !json {
                 println!("Pre-failure trace finished. Replaying trace...");
             }
-            let (fences_with_writes, trace_entries) = gen.replay().context("replay failed")?;
+            let fences_with_writes = gen.replay().context("replay failed")?;
 
             let mut ta_bugs = 0;
             let mut ta_entries = 0;
-            let mut ta = TraceAnalyzer::new(gen.get_output_dir());
+            let mut ta = TraceAnalyzer::new();
             if trace_analysis {
                 if !json {
                     println!("Analyzing Trace...");
                 }
-                (ta_bugs, ta_entries) = ta.analyze_trace(trace_entries)?;
+                (ta_bugs, ta_entries) = ta.analyze_trace(gen.trace_path(), gen.get_output_dir())?;
             }
 
             if !json {
@@ -297,6 +316,41 @@ fn main() -> Result<()> {
                 );
             } else {
                 let serialized_json = serde_json::to_string(&json_data).unwrap();
+                println!("{}", serialized_json);
+            }
+        }
+        Commands::AnalyzeTrace {
+            trace_file,
+            output_dir,
+            json,
+        } => {
+            let mut ta = TraceAnalyzer::new();
+            if !json {
+                println!("Analyzing Trace...");
+            }
+            let (ta_bugs, ta_entries) =
+                ta.analyze_trace(trace_file, output_dir.unwrap_or(PathBuf::from(".")))?;
+
+            let ta_data = TAJSONData {
+                ta_bugs,
+                ta_entries,
+                total_ms: ta
+                    .get_timing_end_trace_analysis()
+                    .duration_since(ta.get_timing_start_trace_analysis())
+                    .as_millis(),
+            };
+
+            if !json {
+                println!(
+                    "Found {} Trace Analysis Bugs out of {} entries in {}.",
+                    ta_bugs,
+                    ta_entries,
+                    ta.get_timing_end_trace_analysis()
+                        .duration_since(ta.get_timing_start_trace_analysis())
+                        .mmss()
+                );
+            } else {
+                let serialized_json = serde_json::to_string(&ta_data).unwrap();
                 println!("{}", serialized_json);
             }
         }

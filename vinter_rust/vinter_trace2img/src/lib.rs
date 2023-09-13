@@ -41,27 +41,6 @@ impl Mmss for std::time::Duration {
     }
 }
 
-#[derive(Clone)]
-pub struct TraceAnalysisEntry {
-    checkpoint_id: isize,
-    trace_entry: TraceEntry,
-    kernel_stacktrace: Vec<u64>,
-}
-
-impl TraceAnalysisEntry {
-    fn new(
-        checkpoint_id: isize,
-        trace_entry: TraceEntry,
-        kernel_stacktrace: Vec<u64>,
-    ) -> TraceAnalysisEntry {
-        TraceAnalysisEntry {
-            checkpoint_id,
-            trace_entry,
-            kernel_stacktrace,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum BugType {
     RedundantFlush,
@@ -105,16 +84,23 @@ struct Store {
     size: usize,
     instruction_id: usize,
     state: StoreState,
-    entry: TraceAnalysisEntry,
+    checkpoint_id: isize,
+    kernel_stacktrace: Vec<u64>,
 }
 
 impl Store {
-    fn new(size: usize, instruction_id: usize, entry: TraceAnalysisEntry) -> Store {
+    fn new(
+        size: usize,
+        instruction_id: usize,
+        checkpoint_id: isize,
+        kernel_stacktrace: Vec<u64>,
+    ) -> Store {
         Store {
             size,
             instruction_id,
             state: StoreState::Modified,
-            entry,
+            checkpoint_id,
+            kernel_stacktrace,
         }
     }
     fn change_state(&mut self, new_state: StoreState) {
@@ -123,7 +109,6 @@ impl Store {
 }
 
 pub struct TraceAnalyzer {
-    output_dir: PathBuf,
     fences_pending: HashMap<usize, Store>,
     flushes_pending: HashMap<usize, Store>,
     bugs: Vec<Bug>,
@@ -142,11 +127,10 @@ fn get_zero_vec(addr: Vec<u64>) -> Vec<u64> {
 }
 
 impl TraceAnalyzer {
-    pub fn new(output_dir: PathBuf) -> TraceAnalyzer {
+    pub fn new() -> TraceAnalyzer {
         let mut failure_point_tree = FailurePointTree::new();
         failure_point_tree.set_trace_analysis(true);
         TraceAnalyzer {
-            output_dir,
             fences_pending: HashMap::new(),
             flushes_pending: HashMap::new(),
             bugs: Vec::new(),
@@ -223,35 +207,102 @@ impl TraceAnalyzer {
 
     pub fn analyze_trace(
         &mut self,
-        trace_entry_vec: Vec<TraceAnalysisEntry>,
+        trace_file: PathBuf,
+        output_dir: PathBuf,
     ) -> Result<(usize, usize)> {
         self.timing_start_trace_analysis = Instant::now();
-        let ta_entries = trace_entry_vec.len();
-        for entry in trace_entry_vec {
-            match entry.clone().trace_entry {
+
+        let mut ta_entries = 0;
+        let mut pre_failure_success = false;
+        let mut last_hypercall_checkpoint: isize = -1;
+        let mut previous_checkpoints = Vec::new();
+
+        let mut file =
+            BufReader::new(File::open(&trace_file).context("could not open trace file")?);
+
+        for entry in trace::parse_trace_file_bin(&mut file) {
+            match entry? {
                 TraceEntry::Write {
                     id,
                     address,
                     size,
                     non_temporal,
+                    metadata,
                     ..
                 } => {
-                    self.process_trace_entry_write(address, size, non_temporal, id, entry);
+                    if last_hypercall_checkpoint >= 0 {
+                        ta_entries += 1;
+                        self.process_trace_entry_write(
+                            address,
+                            size,
+                            non_temporal,
+                            id,
+                            last_hypercall_checkpoint,
+                            metadata.kernel_stacktrace,
+                        );
+                    }
                 }
-                TraceEntry::Fence { id, .. } => self.process_trace_entry_fence(id, entry),
+                TraceEntry::Fence { id, metadata, .. } => {
+                    if last_hypercall_checkpoint >= 0 {
+                        ta_entries += 1;
+                        self.process_trace_entry_fence(
+                            id,
+                            last_hypercall_checkpoint,
+                            metadata.kernel_stacktrace,
+                        );
+                    }
+                }
                 TraceEntry::Flush {
                     id,
                     mnemonic,
                     address,
+                    metadata,
                     ..
-                } => self.process_trace_entry_flush(&mnemonic, address, id, entry),
+                } => {
+                    if last_hypercall_checkpoint >= 0 {
+                        ta_entries += 1;
+                        self.process_trace_entry_flush(
+                            &mnemonic,
+                            address,
+                            id,
+                            last_hypercall_checkpoint,
+                            metadata.kernel_stacktrace,
+                        );
+                    }
+                }
+                TraceEntry::Hypercall {
+                    id, action, value, ..
+                } => match action.as_ref() {
+                    "checkpoint" => {
+                        if !pre_failure_success {
+                            last_hypercall_checkpoint =
+                                value.parse().context("invalid checkpoint value")?;
+                            if previous_checkpoints.contains(&last_hypercall_checkpoint) {
+                                bail!(
+                                    "duplicate checkpoint id {} at trace_id {}",
+                                    last_hypercall_checkpoint,
+                                    id
+                                );
+                            } else {
+                                previous_checkpoints.push(last_hypercall_checkpoint);
+                            }
+                        }
+                    }
+                    "success" => {
+                        if pre_failure_success {
+                            bail!("multiple success hypercalls");
+                        }
+                        pre_failure_success = true;
+                    }
+                    _ => {}
+                },
                 _ => (),
             }
         }
 
         self.check_remainder();
 
-        let ta_bugs_file = File::create(self.output_dir.join("ta_bugs.yaml"))?;
+        let ta_bugs_file = File::create(output_dir.join("ta_bugs.yaml"))?;
         serde_yaml::to_writer(&ta_bugs_file, &self.bugs).context("failed writing ta_bugs.yaml")?;
 
         self.timing_end_trace_analysis = Instant::now();
@@ -264,7 +315,8 @@ impl TraceAnalyzer {
         size: usize,
         non_temporal: bool,
         id: usize,
-        entry: TraceAnalysisEntry,
+        checkpoint_id: isize,
+        kernel_stacktrace: Vec<u64>,
     ) {
         macro_rules! check_store {
             ($address:expr; $write_end:expr; $group:expr; $bug_type:expr) => {
@@ -275,7 +327,12 @@ impl TraceAnalyzer {
                     if Self::target_store_contains_source_store(k, v.size, address, $write_end)
                         || Self::source_store_contains_target_store(k, v.size, address, $write_end)
                     {
-                        self.add_bug($bug_type, v.instruction_id, v.entry);
+                        self.add_bug(
+                            $bug_type,
+                            v.instruction_id,
+                            v.checkpoint_id,
+                            v.kernel_stacktrace,
+                        );
 
                         $group.remove(&k);
                     }
@@ -287,7 +344,7 @@ impl TraceAnalyzer {
         check_store!(address; write_end; self.flushes_pending; BugType::OverwrittenUnflushed);
         check_store!(address; write_end; self.fences_pending; BugType::OverwrittenUnfenced);
 
-        let mut write = Store::new(size, id, entry);
+        let mut write = Store::new(size, id, checkpoint_id, kernel_stacktrace);
 
         if non_temporal {
             write.change_state(StoreState::Flushed);
@@ -297,13 +354,28 @@ impl TraceAnalyzer {
         }
     }
 
-    fn process_trace_entry_fence(&mut self, id: usize, entry: TraceAnalysisEntry) {
+    fn process_trace_entry_fence(
+        &mut self,
+        id: usize,
+        checkpoint_id: isize,
+        kernel_stacktrace: Vec<u64>,
+    ) {
         if self.fences_pending.len() == 0 {
-            self.add_bug(BugType::RedundantFence, id, entry.clone());
+            self.add_bug(
+                BugType::RedundantFence,
+                id,
+                checkpoint_id,
+                kernel_stacktrace.clone(),
+            );
         }
         self.fences_pending.clear();
         if self.unordered_flushes > 1 {
-            self.add_bug(BugType::UnorderedFlushes, id, entry);
+            self.add_bug(
+                BugType::UnorderedFlushes,
+                id,
+                checkpoint_id,
+                kernel_stacktrace,
+            );
         }
         self.unordered_flushes = 0;
     }
@@ -313,7 +385,8 @@ impl TraceAnalyzer {
         mnemonic: &String,
         address: usize,
         id: usize,
-        entry: TraceAnalysisEntry,
+        checkpoint_id: isize,
+        kernel_stacktrace: Vec<u64>,
     ) {
         let mut flushed_stores = 0;
         let flush_end = address + CACHELINE_SIZE;
@@ -353,16 +426,31 @@ impl TraceAnalyzer {
                 _ => (),
             }
         } else {
-            self.add_bug(BugType::RedundantFlush, id, entry);
+            self.add_bug(
+                BugType::RedundantFlush,
+                id,
+                checkpoint_id,
+                kernel_stacktrace,
+            );
         }
     }
 
     fn check_remainder(&mut self) {
         for (_, store) in self.flushes_pending.clone() {
-            self.add_bug(BugType::MissingFlush, store.instruction_id, store.entry);
+            self.add_bug(
+                BugType::MissingFlush,
+                store.instruction_id,
+                store.checkpoint_id,
+                store.kernel_stacktrace,
+            );
         }
         for (_, store) in self.fences_pending.clone() {
-            self.add_bug(BugType::MissingFence, store.instruction_id, store.entry);
+            self.add_bug(
+                BugType::MissingFence,
+                store.instruction_id,
+                store.checkpoint_id,
+                store.kernel_stacktrace,
+            );
         }
         self.fences_pending.clear();
         self.fences_pending.clear();
@@ -373,9 +461,15 @@ impl TraceAnalyzer {
     }
 
     // Use the Failure Point tree to deduplicate bugs
-    fn add_bug(&mut self, bug_type: BugType, id: usize, entry: TraceAnalysisEntry) {
-        let bug = Bug::new(bug_type.clone(), entry.checkpoint_id, id);
-        let zero_vec = get_zero_vec(entry.kernel_stacktrace);
+    fn add_bug(
+        &mut self,
+        bug_type: BugType,
+        id: usize,
+        checkpoint_id: isize,
+        kernel_stacktrace: Vec<u64>,
+    ) {
+        let bug = Bug::new(bug_type.clone(), checkpoint_id, id);
+        let zero_vec = get_zero_vec(kernel_stacktrace);
         if self
             .failure_point_tree
             .add_bug(&zero_vec, zero_vec.len(), Some(bug.clone()))
@@ -622,7 +716,7 @@ pub struct GenericCrashImageGenerator {
     pub semantic_states: HashMap<SemanticStateHash, SemanticState>,
     fail_recovery_silent: bool,
     failed_recovery_count: usize,
-    trace_analysis: bool,
+    stacktrace: bool,
     timing_start_trace: Instant,
     timing_start_crash_image_generation: Instant,
     timing_start_semantic_state_generation: Instant,
@@ -636,7 +730,7 @@ impl GenericCrashImageGenerator {
         mut output_dir: PathBuf,
         generator_config: CrashImageGenerator,
         fail_recovery_silent: bool,
-        trace_analysis: bool,
+        generate_stacktrace: bool,
     ) -> Result<Self> {
         let vm_config: config::Config = {
             let f = File::open(&vm_config_path).context("could not open VM config file")?;
@@ -690,6 +784,12 @@ impl GenericCrashImageGenerator {
             bail!("qemu-img failed with status {}", status);
         }
 
+        let stacktrace = if matches!(generator_config, CrashImageGenerator::FailurePointTree) {
+            true
+        } else {
+            generate_stacktrace
+        };
+
         Ok(GenericCrashImageGenerator {
             vm_config_path,
             vm_config,
@@ -703,7 +803,7 @@ impl GenericCrashImageGenerator {
             semantic_states: HashMap::new(),
             fail_recovery_silent,
             failed_recovery_count: 0,
-            trace_analysis,
+            stacktrace,
             timing_start_trace: Instant::now(),
             timing_start_crash_image_generation: Instant::now(),
             timing_start_semantic_state_generation: Instant::now(),
@@ -722,9 +822,7 @@ impl GenericCrashImageGenerator {
         let cmd = format!("cat /proc/uptime; cat /proc/uptime; cat /proc/uptime; {prefix} && {suffix} && hypercall success; cat /proc/uptime",
             prefix = self.vm_config.commands.get("trace_cmd_prefix").ok_or_else(|| anyhow!("missing trace_cmd_prefix in VM configuration"))?,
             suffix = self.test_config.trace_cmd_suffix);
-        let metadata_arg = if self.trace_analysis
-            || matches!(self.generator_config, CrashImageGenerator::FailurePointTree)
-        {
+        let metadata_arg = if self.stacktrace {
             Vec::from(["--metadata", "kernel_stacktrace"])
         } else {
             Vec::new()
@@ -780,7 +878,7 @@ impl GenericCrashImageGenerator {
     }
 
     /// Returns the path to the pre-failure trace file.
-    fn trace_path(&self) -> PathBuf {
+    pub fn trace_path(&self) -> PathBuf {
         self.output_dir.join("trace.bin")
     }
 
@@ -1125,7 +1223,7 @@ impl GenericCrashImageGenerator {
     }
 
     /// Replay the generated trace and generate crash images.
-    pub fn replay(&mut self) -> Result<(usize, Vec<TraceAnalysisEntry>)> {
+    pub fn replay(&mut self) -> Result<usize> {
         use std::collections::hash_map::Entry;
 
         let mut current_writes = false;
@@ -1133,7 +1231,6 @@ impl GenericCrashImageGenerator {
         let mut last_hypercall_checkpoint: isize = -1;
         let mut pre_failure_success = false;
         let mut checkpoint_ids: HashMap<isize, usize> = HashMap::new();
-        let mut trace_entry_vec = Vec::new();
 
         let checkpoint_range = self
             .test_config
@@ -1163,36 +1260,9 @@ impl GenericCrashImageGenerator {
         for entry in processed_trace {
             let trace_entry = entry?;
             match trace_entry.clone() {
-                TraceEntry::Flush { id, metadata, .. } => {
-                    if self.trace_analysis && within_checkpoint_range(last_hypercall_checkpoint) {
-                        trace_entry_vec.push(TraceAnalysisEntry::new(
-                            last_hypercall_checkpoint,
-                            trace_entry,
-                            metadata.kernel_stacktrace.clone(),
-                        ));
-                    }
-                    // Only insert crash images for flushes when using the FPT
-                    if let CrashImageGenerator::FailurePointTree = self.generator_config {
-                        if current_writes && within_checkpoint_range(last_hypercall_checkpoint) {
-                            self.insert_crash_image(
-                                id,
-                                &replayer_mem.borrow(),
-                                last_hypercall_checkpoint,
-                                Some(metadata.kernel_stacktrace),
-                            )?;
-                            current_writes = false;
-                            fences_or_flushes_with_writes += 1;
-                        }
-                    }
-                }
-                TraceEntry::Fence { id, metadata, .. } => {
-                    if self.trace_analysis && within_checkpoint_range(last_hypercall_checkpoint) {
-                        trace_entry_vec.push(TraceAnalysisEntry::new(
-                            last_hypercall_checkpoint,
-                            trace_entry,
-                            metadata.kernel_stacktrace.clone(),
-                        ));
-                    }
+                TraceEntry::Flush { id, metadata, .. }
+                    if matches!(self.generator_config, CrashImageGenerator::FailurePointTree) =>
+                {
                     if current_writes && within_checkpoint_range(last_hypercall_checkpoint) {
                         self.insert_crash_image(
                             id,
@@ -1204,14 +1274,19 @@ impl GenericCrashImageGenerator {
                         fences_or_flushes_with_writes += 1;
                     }
                 }
-                TraceEntry::Write { metadata, .. } => {
-                    if self.trace_analysis && within_checkpoint_range(last_hypercall_checkpoint) {
-                        trace_entry_vec.push(TraceAnalysisEntry::new(
+                TraceEntry::Fence { id, metadata, .. } => {
+                    if current_writes && within_checkpoint_range(last_hypercall_checkpoint) {
+                        self.insert_crash_image(
+                            id,
+                            &replayer_mem.borrow(),
                             last_hypercall_checkpoint,
-                            trace_entry,
-                            metadata.kernel_stacktrace.clone(),
-                        ));
+                            Some(metadata.kernel_stacktrace),
+                        )?;
+                        current_writes = false;
+                        fences_or_flushes_with_writes += 1;
                     }
+                }
+                TraceEntry::Write { .. } => {
                     current_writes = true;
                 }
                 TraceEntry::Hypercall {
@@ -1257,7 +1332,7 @@ impl GenericCrashImageGenerator {
         serde_yaml::to_writer(&index_file, &self.crash_images)
             .context("failed writing crash_images/index.yaml")?;
 
-        Ok((fences_or_flushes_with_writes, trace_entry_vec))
+        Ok(fences_or_flushes_with_writes)
     }
 
     /// Extract the semantic state of each crash image.
