@@ -59,6 +59,9 @@ enum Commands {
         #[clap(short, long)]
         /// Use Advanced Trace analysis to find performance and implementation bugs
         trace_analysis: bool,
+        #[clap(short, long)]
+        /// Store the kernel stacktrace in the trace. Default: true when using trace analysis or the FPT heuristic, false otherwise
+        kernel_stacktrace: bool,
     },
     // Analyze a given Trace file
     AnalyzeTrace {
@@ -134,6 +137,7 @@ fn main() -> Result<()> {
             json,
             verbose,
             trace_analysis,
+            kernel_stacktrace
         } => {
             let mut gen_config = CrashImageGenerator::Heuristic;
             let mut fences_log_text = "fences";
@@ -174,7 +178,7 @@ fn main() -> Result<()> {
                 output_dir.unwrap_or(PathBuf::from(".")),
                 gen_config,
                 json,
-                trace_analysis,
+                trace_analysis || kernel_stacktrace,
             )?;
 
             if !json {
