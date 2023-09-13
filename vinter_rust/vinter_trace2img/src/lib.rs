@@ -1171,9 +1171,9 @@ impl GenericCrashImageGenerator {
                             metadata.kernel_stacktrace.clone(),
                         ));
                     }
-                    if current_writes && within_checkpoint_range(last_hypercall_checkpoint) {
-                        // Only insert crash images for flushes when using the FPT
-                        if let CrashImageGenerator::FailurePointTree = self.generator_config {
+                    // Only insert crash images for flushes when using the FPT
+                    if let CrashImageGenerator::FailurePointTree = self.generator_config {
+                        if current_writes && within_checkpoint_range(last_hypercall_checkpoint) {
                             self.insert_crash_image(
                                 id,
                                 &replayer_mem.borrow(),
