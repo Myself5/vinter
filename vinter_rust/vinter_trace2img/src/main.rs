@@ -6,9 +6,11 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 
+use vinter_common::Mmss;
+
 use vinter_trace2img::{
     CrashImageGenerator, GenericCrashImageGenerator, LineGranularity, MemoryImage, MemoryImageMmap,
-    MemoryReplayer, Mmss, TraceAnalyzer, X86PersistentMemory,
+    MemoryReplayer, TraceAnalyzer, X86PersistentMemory,
 };
 
 #[derive(Parser)]

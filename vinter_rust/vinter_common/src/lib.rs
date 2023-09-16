@@ -3,6 +3,19 @@ use serde::Serialize;
 pub mod fptree;
 pub mod trace;
 
+pub trait Mmss {
+    fn mmss(&self) -> String;
+}
+
+impl Mmss for std::time::Duration {
+    fn mmss(&self) -> String {
+        let s = self.as_secs();
+        let (m, s) = (s / 60, s % 60);
+
+        format!("{:02}:{:02}", m, s)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum BugType {
     RedundantFlush,
