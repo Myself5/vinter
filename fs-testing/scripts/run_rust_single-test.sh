@@ -19,7 +19,7 @@ usage() {
   echo " -t <testname>: Specify the test to run. Default: test_hello-world"
   echo " -(j)son: Create a JSON output instead of the default, human readable text"
   echo " -(v)erbose: Show verbose duration timings (always included in json)"
-  echo " --ta: Use advanced trace analysis"
+  echo " -(k)ernel-stacktrace: Always include kernel_stacktrace in trace"
 }
 
 generator="default"
@@ -49,8 +49,8 @@ while [[ "${1-}" = -* ]]; do
   -v | --verbose)
     options+=("--verbose")
     ;;
-  --ta)
-    options+=("--trace-analysis")
+  -k | --kernel-stacktrace)
+    options+=("--kernel-stacktrace")
     ;;
   --help | -h | *)
     usage

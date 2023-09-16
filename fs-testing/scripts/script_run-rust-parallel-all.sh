@@ -17,7 +17,7 @@ usage() {
 	echo " -g (n)one, (d)efault, (f)pt: Specify the used heuristic generator"
 	echo " -(j)son: Create a JSON output instead of the default, human readable text"
 	echo " -(v)erbose: Show verbose duration timings (always included in json)"
-	echo " --ta: Use advanced trace analysis"
+	echo " --st: Always include kernel_stacktrace in trace"
 }
 
 parallel=1
@@ -50,8 +50,8 @@ while [[ "${1-}" = -* ]]; do
 	-v | --verbose)
 		options+=("--verbose")
 		;;
-	--ta)
-		options+=("--trace-analysis")
+	-k | --kernel-stacktrace)
+		options+=("--kernel-stacktrace")
 		;;
 	--help | -h | *)
 		usage
@@ -74,13 +74,11 @@ for vm in "${vms[@]}"; do
 
 		c=$(jq "[.${vm//[^[:alnum:]]/_} | .results[] | .crash_image_ms] | reduce .[] as \$num (0; .+\$num)" $results/rust_parallel_results.json)
 
-		ta=$(jq "[.${vm//[^[:alnum:]]/_} | .results[] | .trace_analysis_ms] | reduce .[] as \$num (0; .+\$num)" $results/rust_parallel_results.json)
-
 		s=$(jq "[.${vm//[^[:alnum:]]/_} | .results[] | .semantic_state_ms] | reduce .[] as \$num (0; .+\$num)" $results/rust_parallel_results.json)
 
 		f=$(jq "[.${vm//[^[:alnum:]]/_} | .results[] | .total_ms] | reduce .[] as \$num (0; .+\$num)" $results/rust_parallel_results.json)
 
-		jq ".${vm//[^[:alnum:]]/_} += {trace_ms: $t,crash_image_ms: $c,trace_analysis_ms: $ta,semantic_state_ms: $s,full_run_ms: $f}" $results/rust_parallel_results.json >$results/rust_parallel_results.json.tmp && mv $results/rust_parallel_results.json.tmp $results/rust_parallel_results.json
+		jq ".${vm//[^[:alnum:]]/_} += {trace_ms: $t,crash_image_ms: $c,semantic_state_ms: $s,full_run_ms: $f}" $results/rust_parallel_results.json >$results/rust_parallel_results.json.tmp && mv $results/rust_parallel_results.json.tmp $results/rust_parallel_results.json
 
 		sorted_results=$(jq ".${vm//[^[:alnum:]]/_}.results | sort_by(.test)" $results/rust_parallel_results.json)
 

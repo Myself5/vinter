@@ -10,7 +10,7 @@ use vinter_common::Mmss;
 
 use vinter_trace2img::{
     CrashImageGenerator, GenericCrashImageGenerator, LineGranularity, MemoryImage, MemoryImageMmap,
-    MemoryReplayer, TraceAnalyzer, X86PersistentMemory,
+    MemoryReplayer, X86PersistentMemory,
 };
 
 #[derive(Parser)]
@@ -59,23 +59,8 @@ enum Commands {
         /// Show verbose duration timings (always included in json)
         verbose: bool,
         #[clap(short, long)]
-        /// Use Advanced Trace analysis to find performance and implementation bugs
-        trace_analysis: bool,
-        #[clap(short, long)]
         /// Store the kernel stacktrace in the trace. Default: true when using trace analysis or the FPT heuristic, false otherwise
         kernel_stacktrace: bool,
-    },
-    // Analyze a given Trace file
-    AnalyzeTrace {
-        // Path to trace file
-        #[clap(parse(from_os_str))]
-        trace_file: PathBuf,
-        /// Path to output directory. Default "."
-        #[clap(long, parse(from_os_str))]
-        output_dir: Option<PathBuf>,
-        #[clap(short, long)]
-        /// Create a JSON output instead of the default, human readable text
-        json: bool,
     },
 }
 
@@ -88,19 +73,9 @@ struct JSONData {
     crash_images: usize,
     semantic_states: usize,
     failed_recoveries: usize,
-    ta_bugs: usize,
-    ta_entries: usize,
     trace_ms: u128,
     crash_image_ms: u128,
-    trace_analysis_ms: u128,
     semantic_state_ms: u128,
-    total_ms: u128,
-}
-
-#[derive(Debug, Serialize)]
-struct TAJSONData {
-    ta_bugs: usize,
-    ta_entries: usize,
     total_ms: u128,
 }
 
@@ -138,7 +113,6 @@ fn main() -> Result<()> {
             generator,
             json,
             verbose,
-            trace_analysis,
             kernel_stacktrace,
         } => {
             let mut gen_config = CrashImageGenerator::Heuristic;
@@ -169,10 +143,7 @@ fn main() -> Result<()> {
                 .to_str()
                 .unwrap()
                 .to_string();
-            let mut tech_config = gen_config.to_string();
-            if trace_analysis {
-                tech_config.push_str("+TA");
-            }
+            let tech_config = gen_config.to_string();
 
             let mut gen = GenericCrashImageGenerator::new(
                 vm_config,
@@ -180,7 +151,7 @@ fn main() -> Result<()> {
                 output_dir.unwrap_or(PathBuf::from(".")),
                 gen_config,
                 json,
-                trace_analysis || kernel_stacktrace,
+                kernel_stacktrace,
             )?;
 
             if !json {
@@ -193,33 +164,13 @@ fn main() -> Result<()> {
             }
             let fences_with_writes = gen.replay().context("replay failed")?;
 
-            let mut ta_bugs = 0;
-            let mut ta_entries = 0;
-            let mut ta = TraceAnalyzer::new();
-            if trace_analysis {
-                if !json {
-                    println!("Analyzing Trace...");
-                }
-                (ta_bugs, ta_entries) = ta.analyze_trace(gen.trace_path(), gen.get_output_dir())?;
-            }
-
             if !json {
-                if !trace_analysis {
-                    println!(
-                        "Replay finished. {} {} with writes, {} crash images",
-                        fences_with_writes,
-                        fences_log_text,
-                        gen.crash_images.len()
-                    );
-                } else {
-                    println!(
-                    "Replay finished. {} {} with writes, {} crash images, {} trace analysis bugs",
+                println!(
+                    "Replay finished. {} {} with writes, {} crash images",
                     fences_with_writes,
                     fences_log_text,
-                    gen.crash_images.len(),
-                    ta_bugs,
+                    gen.crash_images.len()
                 );
-                }
                 println!("Extracing semantic states...");
             }
             gen.extract_semantic_states()
@@ -233,33 +184,17 @@ fn main() -> Result<()> {
                 crash_images: gen.crash_images.len(),
                 semantic_states: gen.semantic_states.len(),
                 failed_recoveries: gen.get_failed_recovery_count(),
-                ta_bugs,
-                ta_entries,
                 trace_ms: gen
                     .get_timing_start_crash_image_generation()
                     .duration_since(gen.get_timing_trace())
                     .as_millis(),
-                crash_image_ms: if trace_analysis {
-                    ta.get_timing_start_trace_analysis()
-                } else {
-                    gen.get_timing_start_semantic_state_generation()
-                }
-                .duration_since(gen.get_timing_start_crash_image_generation())
-                .as_millis(),
-                trace_analysis_ms: if trace_analysis {
-                    ta.get_timing_end_trace_analysis()
-                        .duration_since(ta.get_timing_start_trace_analysis())
-                        .as_millis()
-                } else {
-                    0
-                },
+                crash_image_ms: gen
+                    .get_timing_start_semantic_state_generation()
+                    .duration_since(gen.get_timing_start_crash_image_generation())
+                    .as_millis(),
                 semantic_state_ms: gen
                     .get_timing_end_semantic_state_generation()
-                    .duration_since(if trace_analysis {
-                        ta.get_timing_end_trace_analysis()
-                    } else {
-                        gen.get_timing_start_semantic_state_generation()
-                    })
+                    .duration_since(gen.get_timing_start_semantic_state_generation())
                     .as_millis(),
                 total_ms: gen
                     .get_timing_end_semantic_state_generation()
@@ -287,30 +222,14 @@ fn main() -> Result<()> {
                     );
                     println!(
                         "Crash Image Generation: {}",
-                        if trace_analysis {
-                            ta.get_timing_start_trace_analysis()
-                        } else {
-                            gen.get_timing_start_semantic_state_generation()
-                        }
-                        .duration_since(gen.get_timing_start_crash_image_generation())
-                        .mmss(),
+                        gen.get_timing_start_semantic_state_generation()
+                            .duration_since(gen.get_timing_start_crash_image_generation())
+                            .mmss(),
                     );
-                    if trace_analysis {
-                        println!(
-                            "Trace Analysis: {}",
-                            ta.get_timing_end_trace_analysis()
-                                .duration_since(ta.get_timing_start_trace_analysis())
-                                .mmss(),
-                        );
-                    }
                     println!(
                         "Semantic State Extraction: {}",
                         gen.get_timing_end_semantic_state_generation()
-                            .duration_since(if trace_analysis {
-                                ta.get_timing_end_trace_analysis()
-                            } else {
-                                gen.get_timing_start_semantic_state_generation()
-                            })
+                            .duration_since(gen.get_timing_start_semantic_state_generation())
                             .mmss(),
                     );
                 }
@@ -322,41 +241,6 @@ fn main() -> Result<()> {
                 );
             } else {
                 let serialized_json = serde_json::to_string(&json_data).unwrap();
-                println!("{}", serialized_json);
-            }
-        }
-        Commands::AnalyzeTrace {
-            trace_file,
-            output_dir,
-            json,
-        } => {
-            let mut ta = TraceAnalyzer::new();
-            if !json {
-                println!("Analyzing Trace...");
-            }
-            let (ta_bugs, ta_entries) =
-                ta.analyze_trace(trace_file, output_dir.unwrap_or(PathBuf::from(".")))?;
-
-            let ta_data = TAJSONData {
-                ta_bugs,
-                ta_entries,
-                total_ms: ta
-                    .get_timing_end_trace_analysis()
-                    .duration_since(ta.get_timing_start_trace_analysis())
-                    .as_millis(),
-            };
-
-            if !json {
-                println!(
-                    "Found {} Trace Analysis Bugs out of {} entries in {}.",
-                    ta_bugs,
-                    ta_entries,
-                    ta.get_timing_end_trace_analysis()
-                        .duration_since(ta.get_timing_start_trace_analysis())
-                        .mmss()
-                );
-            } else {
-                let serialized_json = serde_json::to_string(&ta_data).unwrap();
                 println!("{}", serialized_json);
             }
         }
