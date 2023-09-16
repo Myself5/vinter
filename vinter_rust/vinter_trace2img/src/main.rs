@@ -137,7 +137,7 @@ fn main() -> Result<()> {
             json,
             verbose,
             trace_analysis,
-            kernel_stacktrace
+            kernel_stacktrace,
         } => {
             let mut gen_config = CrashImageGenerator::Heuristic;
             let mut fences_log_text = "fences";

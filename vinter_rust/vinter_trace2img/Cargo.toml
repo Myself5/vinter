@@ -7,9 +7,6 @@ edition = "2021"
 name = "image"
 harness = false
 
-[[example]]
-name = "fptree"
-
 [dev-dependencies]
 criterion = "0.3"
 

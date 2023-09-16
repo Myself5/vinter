@@ -1,4 +1,4 @@
-use vinter_trace2img::FailurePointTree;
+use vinter_common::fptree::FailurePointTree;
 
 fn main() {
     let mut tree = FailurePointTree::new();

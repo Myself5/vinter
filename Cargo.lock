@@ -1361,6 +1361,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "hex",
+ "serde",
  "snap",
 ]
 

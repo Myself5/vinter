@@ -12,7 +12,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use itertools::Itertools;
 use serde::{Serialize, Serializer};
 
+use vinter_common::fptree::FailurePointTree;
 use vinter_common::trace::{self, TraceEntry};
+use vinter_common::{Bug, BugType};
 
 mod image;
 mod set;
@@ -22,9 +24,6 @@ mod pmem;
 pub use pmem::{LineGranularity, X86PersistentMemory};
 
 pub mod config;
-
-mod fptree;
-pub use fptree::{FPTraceAddr, FailurePointTree};
 
 const CACHELINE_SIZE: usize = 64;
 
@@ -38,36 +37,6 @@ impl Mmss for std::time::Duration {
         let (m, s) = (s / 60, s % 60);
 
         format!("{:02}:{:02}", m, s)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub enum BugType {
-    RedundantFlush,
-    RedundantFence,
-    MissingFlush,
-    MissingFence,
-    OverwrittenUnflushed,
-    OverwrittenUnfenced,
-    ImplicitFlush,
-    UnorderedFlushes,
-    None,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Bug {
-    bug_type: BugType,
-    checkpoint: isize,
-    id: usize,
-}
-
-impl Bug {
-    pub fn new(bug_type: BugType, checkpoint: isize, id: usize) -> Bug {
-        Bug {
-            bug_type,
-            checkpoint,
-            id,
-        }
     }
 }
 
