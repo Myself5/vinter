@@ -120,12 +120,6 @@ pub struct TraceAnalyzer {
     failure_point_tree: FailurePointTree,
 }
 
-fn get_zero_vec(addr: Vec<u64>) -> Vec<u64> {
-    let mut vec = Vec::from([0]);
-    vec.extend_from_slice(&addr[..]);
-    vec
-}
-
 impl TraceAnalyzer {
     pub fn new() -> TraceAnalyzer {
         let mut failure_point_tree = FailurePointTree::new();
@@ -469,7 +463,7 @@ impl TraceAnalyzer {
         kernel_stacktrace: Vec<u64>,
     ) {
         let bug = Bug::new(bug_type.clone(), checkpoint_id, id);
-        let zero_vec = get_zero_vec(kernel_stacktrace);
+        let zero_vec = FailurePointTree::get_zero_vec(kernel_stacktrace);
         if self
             .failure_point_tree
             .add_bug(&zero_vec, zero_vec.len(), Some(bug.clone()))
@@ -992,7 +986,7 @@ impl GenericCrashImageGenerator {
             match callstack_option {
                 Some(callstack) => {
                     // give the stack a common root (0)
-                    let zero_vec = get_zero_vec(callstack);
+                    let zero_vec = FailurePointTree::get_zero_vec(callstack);
                     if !self.failure_point_tree.add(&zero_vec, zero_vec.len()) {
                         // This specific callstack is already included, skip
                         return Ok(());

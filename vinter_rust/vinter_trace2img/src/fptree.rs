@@ -54,6 +54,12 @@ impl FailurePointTree {
         }
     }
 
+    pub fn get_zero_vec(addr: Vec<u64>) -> Vec<u64> {
+        let mut vec = Vec::from([0]);
+        vec.extend_from_slice(&addr[..]);
+        vec
+    }
+
     pub fn set_trace_analysis(&mut self, ta: bool) {
         self.trace_analysis = ta;
     }
