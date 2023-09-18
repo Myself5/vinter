@@ -95,14 +95,27 @@ pub fn print_frame(a2l: &addr2line::ObjectContext, addr: u64) -> String {
 }
 
 macro_rules! get_kernel_stracktrace {
-    ($metadata:expr; $a2l:expr; $output:expr) => {
+    ($metadata:expr; $a2l:expr; $output:expr; $padding:expr) => {
         if let Some(a2l) = &$a2l {
             if $metadata.in_kernel {
-                write!($output, "\tpc: {}", print_frame(a2l, $metadata.pc)).unwrap();
+                write!(
+                    $output,
+                    "{}pc: {}",
+                    $padding,
+                    print_frame(a2l, $metadata.pc)
+                )
+                .unwrap();
                 if !$metadata.kernel_stacktrace.is_empty() {
-                    write!($output, "\tstack trace:\n").unwrap();
+                    write!($output, "{}stack trace:\n", $padding).unwrap();
                     for (i, addr) in $metadata.kernel_stacktrace.iter().enumerate() {
-                        write!($output, "\t#{}: {}", i + 1, print_frame(a2l, *addr)).unwrap();
+                        write!(
+                            $output,
+                            "{}#{}: {}",
+                            $padding,
+                            i + 1,
+                            print_frame(a2l, *addr)
+                        )
+                        .unwrap();
                     }
                 }
             }
@@ -250,7 +263,7 @@ impl TraceAnalyzer {
                         println!("{:?}", entry);
 
                         let mut stacktrace = String::new();
-                        get_kernel_stracktrace!(metadata; a2l; stacktrace);
+                        get_kernel_stracktrace!(metadata; a2l; stacktrace; "\t");
                         print!("{}", stacktrace);
                     }
                 }
@@ -259,7 +272,7 @@ impl TraceAnalyzer {
                         println!("{:?}", entry);
 
                         let mut stacktrace = String::new();
-                        get_kernel_stracktrace!(metadata; a2l; stacktrace);
+                        get_kernel_stracktrace!(metadata; a2l; stacktrace; "\t");
                         print!("{}", stacktrace);
                     }
                 }
@@ -268,7 +281,7 @@ impl TraceAnalyzer {
                         print!("{:?}", entry);
 
                         let mut stacktrace = String::new();
-                        get_kernel_stracktrace!(metadata; a2l; stacktrace);
+                        get_kernel_stracktrace!(metadata; a2l; stacktrace; "\t");
                         print!("{}", stacktrace);
                     }
                 }
