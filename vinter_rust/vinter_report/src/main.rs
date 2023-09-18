@@ -46,7 +46,7 @@ enum Commands {
         #[clap(parse(from_os_str))]
         trace: PathBuf,
 
-        /// Path to output directory. Default "."
+        /// Path to output directory. Default STDOUT
         #[clap(long, parse(from_os_str))]
         output_dir: Option<PathBuf>,
 
@@ -87,8 +87,7 @@ fn main() -> Result<()> {
             if !json {
                 println!("Analyzing Trace...");
             }
-            let (ta_bugs, ta_entries) =
-                ta.analyze_trace(trace, output_dir.unwrap_or(PathBuf::from(".")))?;
+            let (ta_bugs, ta_entries) = ta.analyze_trace(trace, output_dir.clone())?;
 
             let ta_data = TAJSONData {
                 ta_bugs,
@@ -108,6 +107,9 @@ fn main() -> Result<()> {
                         .duration_since(ta.get_timing_start_trace_analysis())
                         .mmss()
                 );
+                if let Some(p) = output_dir {
+                    println!("Detailed report stored in {:?}", p);
+                };
             } else {
                 let serialized_json = serde_json::to_string(&ta_data).unwrap();
                 println!("{}", serialized_json);

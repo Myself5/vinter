@@ -343,7 +343,7 @@ impl TraceAnalyzer {
     pub fn analyze_trace(
         &mut self,
         trace_file: PathBuf,
-        output_dir: PathBuf,
+        output_dir: Option<PathBuf>,
     ) -> Result<(usize, usize)> {
         self.timing_start_trace_analysis = Instant::now();
 
@@ -446,8 +446,14 @@ impl TraceAnalyzer {
 
         self.check_remainder();
 
-        let ta_bugs_file = File::create(output_dir.join("ta_bugs.yaml"))?;
-        serde_yaml::to_writer(&ta_bugs_file, &self.bugs).context("failed writing ta_bugs.yaml")?;
+        if let Some(output_dir) = output_dir {
+            let ta_bugs_file = File::create(output_dir.join("ta_bugs.yaml"))?;
+            serde_yaml::to_writer(&ta_bugs_file, &self.bugs)
+                .context("failed writing ta_bugs.yaml")?;
+        } else {
+            let yaml = serde_yaml::to_string(&self.bugs).context("failed to format ta_bugs")?;
+            println!("{}", yaml);
+        }
 
         self.timing_end_trace_analysis = Instant::now();
         Ok((self.bugs.len(), ta_entries))
