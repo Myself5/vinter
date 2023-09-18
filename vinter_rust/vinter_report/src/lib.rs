@@ -1,10 +1,10 @@
 use anyhow::{bail, Context, Result};
-use std::fmt::Write;
-use std::fs::File;
-use std::io::{BufReader, Read};
-use std::path::{Path, PathBuf};
 
 use std::collections::HashMap;
+use std::fmt::Write;
+use std::fs::File;
+use std::io::{BufReader, Read, Write as IOWrite};
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use vinter_common::fptree::FailurePointTree;
@@ -170,6 +170,7 @@ pub struct TraceAnalyzer {
     timing_start_trace_analysis: Instant,
     timing_end_trace_analysis: Instant,
     failure_point_tree: FailurePointTree,
+    trace_entries: HashMap<usize, TraceEntry>,
 }
 
 impl TraceAnalyzer {
@@ -186,6 +187,7 @@ impl TraceAnalyzer {
             timing_start_trace_analysis: Instant::now(),
             timing_end_trace_analysis: Instant::now(),
             failure_point_tree,
+            trace_entries: HashMap::new(),
         }
     }
     pub fn read_trace(
@@ -366,7 +368,9 @@ impl TraceAnalyzer {
     pub fn analyze_trace(
         &mut self,
         trace_file: PathBuf,
+        vmlinux: Option<PathBuf>,
         output_dir: Option<PathBuf>,
+        verbose: bool,
     ) -> Result<(usize, usize)> {
         self.timing_start_trace_analysis = Instant::now();
 
@@ -379,7 +383,8 @@ impl TraceAnalyzer {
             BufReader::new(File::open(&trace_file).context("could not open trace file")?);
 
         for entry in trace::parse_trace_file_bin(&mut file) {
-            match entry? {
+            let entry = entry?;
+            match entry.clone() {
                 TraceEntry::Write {
                     id,
                     address,
@@ -393,6 +398,7 @@ impl TraceAnalyzer {
                         if metadata.kernel_stacktrace.is_empty() {
                             bail!("kernel_stacktrace is empty. Please regenerate trace with a kernel_stacktrace included.");
                         }
+                        self.trace_entries.insert(id, entry);
                         self.process_trace_entry_write(
                             address,
                             size,
@@ -409,6 +415,7 @@ impl TraceAnalyzer {
                         if metadata.kernel_stacktrace.is_empty() {
                             bail!("kernel_stacktrace is empty. Please regenerate trace with a kernel_stacktrace included.");
                         }
+                        self.trace_entries.insert(id, entry);
                         self.process_trace_entry_fence(
                             id,
                             last_hypercall_checkpoint,
@@ -428,6 +435,7 @@ impl TraceAnalyzer {
                         if metadata.kernel_stacktrace.is_empty() {
                             bail!("kernel_stacktrace is empty. Please regenerate trace with a kernel_stacktrace included.");
                         }
+                        self.trace_entries.insert(id, entry);
                         self.process_trace_entry_flush(
                             &mnemonic,
                             address,
@@ -469,13 +477,50 @@ impl TraceAnalyzer {
 
         self.check_remainder();
 
-        if let Some(output_dir) = output_dir {
-            let ta_bugs_file = File::create(output_dir.join("ta_bugs.yaml"))?;
-            serde_yaml::to_writer(&ta_bugs_file, &self.bugs)
-                .context("failed writing ta_bugs.yaml")?;
+        let a2l = if let Some(vmlinux) = vmlinux {
+            Some(init_addr2line(&vmlinux)?)
         } else {
-            let yaml = serde_yaml::to_string(&self.bugs).context("failed to format ta_bugs")?;
-            println!("{}", yaml);
+            None
+        };
+
+        let mut formatted_output_string = String::new();
+
+        for bug in &self.bugs {
+            writeln!(formatted_output_string, "- Bug Type: {:?}", bug.bug_type).unwrap();
+            writeln!(formatted_output_string, "  Checkpoint: {}", bug.checkpoint).unwrap();
+            writeln!(formatted_output_string, "  Responsible Trace Entries:",).unwrap();
+            for entry in &bug.trace_entries {
+                match entry {
+                    TraceEntry::Write { metadata, .. }
+                    | TraceEntry::Fence { metadata, .. }
+                    | TraceEntry::Flush { metadata, .. } => {
+                        if verbose {
+                            writeln!(formatted_output_string, "  - {:?}", entry).unwrap();
+                        } else {
+                            writeln!(formatted_output_string, "  - {:?}", entry.to_id_entry())
+                                .unwrap();
+                        }
+
+                        let mut stacktrace = String::new();
+                        get_kernel_stracktrace!(metadata; a2l; stacktrace; "      ");
+
+                        if !stacktrace.is_empty() {
+                            writeln!(formatted_output_string, "    Kernel Stacktrace:").unwrap();
+                            write!(formatted_output_string, "{}", stacktrace).unwrap();
+                        }
+                    }
+                    _ => bail!("Unexpected bug entry."),
+                }
+            }
+            writeln!(formatted_output_string, "").unwrap();
+        }
+
+        if let Some(output_dir) = output_dir {
+            let mut ta_bugs_file = File::create(output_dir.join("ta_bugs.yaml"))?;
+            ta_bugs_file.write_all(formatted_output_string.as_bytes())?;
+            print!("{}", formatted_output_string);
+        } else {
+            print!("{}", formatted_output_string);
         }
 
         self.timing_end_trace_analysis = Instant::now();
@@ -634,7 +679,7 @@ impl TraceAnalyzer {
     fn add_bug(
         &mut self,
         bug_type: BugType,
-        id: Vec<usize>,
+        ids: Vec<usize>,
         checkpoint_id: isize,
         kernel_stacktrace: Vec<u64>,
     ) {
@@ -644,7 +689,12 @@ impl TraceAnalyzer {
             .failure_point_tree
             .add_bug(&zero_vec, zero_vec.len(), Some(fpt_bug))
         {
-            self.bugs.push(Bug::new(bug_type, checkpoint_id, id));
+            let mut trace_entries = Vec::new();
+            for id in ids {
+                trace_entries.push(self.trace_entries.get(&id).unwrap().clone());
+            }
+            self.bugs
+                .push(Bug::new(bug_type, checkpoint_id, trace_entries));
         }
     }
 

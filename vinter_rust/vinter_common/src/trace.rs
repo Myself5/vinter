@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 use std::io::{BufRead, Read, Write};
 
 use anyhow::{bail, Context, Result};
@@ -5,7 +7,7 @@ use bincode::{Decode, Encode};
 
 const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
-#[derive(Debug, Default, Clone, Encode, Decode)]
+#[derive(Debug, Default, Clone, Encode, Decode, Serialize)]
 pub struct Metadata {
     /// current program counter
     pub pc: u64,
@@ -15,7 +17,7 @@ pub struct Metadata {
     pub kernel_stacktrace: Vec<u64>,
 }
 
-#[derive(Debug, Encode, Decode, Clone)]
+#[derive(Debug, Encode, Decode, Clone, Serialize)]
 pub enum TraceEntry {
     Write {
         id: usize,
@@ -49,6 +51,15 @@ pub enum TraceEntry {
     },
 }
 
+#[derive(Debug)]
+pub enum IDTraceEntry {
+    Write { id: usize },
+    Fence { id: usize },
+    Flush { id: usize },
+    Read { id: usize },
+    Hypercall { id: usize },
+}
+
 impl TraceEntry {
     pub fn decode_from_std_read<R: std::io::Read>(
         src: &mut R,
@@ -61,6 +72,16 @@ impl TraceEntry {
         dst: &mut W,
     ) -> std::result::Result<usize, bincode::error::EncodeError> {
         bincode::encode_into_std_write(self, dst, BINCODE_CONFIG)
+    }
+
+    pub fn to_id_entry(&self) -> IDTraceEntry {
+        match self {
+            TraceEntry::Write { id, .. } => IDTraceEntry::Write { id: *id },
+            TraceEntry::Fence { id, .. } => IDTraceEntry::Fence { id: *id },
+            TraceEntry::Flush { id, .. } => IDTraceEntry::Flush { id: *id },
+            TraceEntry::Read { id, .. } => IDTraceEntry::Read { id: *id },
+            TraceEntry::Hypercall { id, .. } => IDTraceEntry::Hypercall { id: *id },
+        }
     }
 }
 

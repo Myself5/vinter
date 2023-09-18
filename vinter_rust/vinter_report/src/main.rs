@@ -50,9 +50,17 @@ enum Commands {
         #[clap(long, parse(from_os_str))]
         output_dir: Option<PathBuf>,
 
+        /// vmlinux file to resolve kernel symbols
+        #[clap(long, parse(from_os_str))]
+        vmlinux: Option<PathBuf>,
+
         #[clap(short, long)]
         /// Create a JSON output instead of the default, human readable text
         json: bool,
+
+        #[clap(short, long)]
+        /// Show all trace_entry information
+        verbose: bool,
     },
 }
 
@@ -81,13 +89,15 @@ fn main() -> Result<()> {
         Commands::AnalyzeTrace {
             trace,
             output_dir,
+            vmlinux,
             json,
+            verbose,
         } => {
             let mut ta = TraceAnalyzer::new();
             if !json {
                 println!("Analyzing Trace...");
             }
-            let (ta_bugs, ta_entries) = ta.analyze_trace(trace, output_dir.clone())?;
+            let (ta_bugs, ta_entries) = ta.analyze_trace(trace, vmlinux, output_dir.clone(), verbose)?;
 
             let ta_data = TAJSONData {
                 ta_bugs,

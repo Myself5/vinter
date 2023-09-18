@@ -1,3 +1,5 @@
+use crate::trace::TraceEntry;
+
 use serde::Serialize;
 
 pub mod fptree;
@@ -31,17 +33,17 @@ pub enum BugType {
 
 #[derive(Debug, Serialize)]
 pub struct Bug {
-    bug_type: BugType,
-    checkpoint: isize,
-    trace_ids: Vec<usize>,
+    pub bug_type: BugType,
+    pub checkpoint: isize,
+    pub trace_entries: Vec<TraceEntry>,
 }
 
 impl Bug {
-    pub fn new(bug_type: BugType, checkpoint: isize, trace_ids: Vec<usize>) -> Bug {
+    pub fn new(bug_type: BugType, checkpoint: isize, trace_entries: Vec<TraceEntry>) -> Bug {
         Bug {
             bug_type,
             checkpoint,
-            trace_ids,
+            trace_entries,
         }
     }
 }
