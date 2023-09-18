@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use vinter_common::fptree::FailurePointTree;
 use vinter_common::trace::{self, TraceEntry};
-use vinter_common::{Bug, BugType};
+use vinter_common::{Bug, BugType, FPTBug};
 
 const CACHELINE_SIZE: usize = 64;
 
@@ -612,13 +612,13 @@ impl TraceAnalyzer {
         checkpoint_id: isize,
         kernel_stacktrace: Vec<u64>,
     ) {
-        let bug = Bug::new(bug_type.clone(), checkpoint_id, id);
+        let fpt_bug = FPTBug::new(bug_type.clone(), checkpoint_id);
         let zero_vec = FailurePointTree::get_zero_vec(kernel_stacktrace);
         if self
             .failure_point_tree
-            .add_bug(&zero_vec, zero_vec.len(), Some(bug.clone()))
+            .add_bug(&zero_vec, zero_vec.len(), Some(fpt_bug))
         {
-            self.bugs.push(bug);
+            self.bugs.push(Bug::new(bug_type, checkpoint_id, id));
         }
     }
 

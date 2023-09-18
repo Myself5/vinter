@@ -1,6 +1,6 @@
 use std::ptr::NonNull;
 
-use crate::Bug;
+use crate::FPTBug;
 type FPTraceLink = Option<NonNull<FPTraceAddr>>;
 
 #[derive(Debug, Clone)]
@@ -9,7 +9,7 @@ pub struct FPTraceAddr {
     visited: bool,
     children: Vec<FPTraceLink>,
     parent: FPTraceLink,
-    bug_entries: Option<Vec<Bug>>,
+    bug_entries: Option<Vec<FPTBug>>,
 }
 
 impl FPTraceAddr {
@@ -17,7 +17,7 @@ impl FPTraceAddr {
         addr: u64,
         children: Vec<FPTraceLink>,
         parent: FPTraceLink,
-        bug_entry: Option<Vec<Bug>>,
+        bug_entry: Option<Vec<FPTBug>>,
     ) -> FPTraceAddr {
         FPTraceAddr {
             addr,
@@ -91,7 +91,7 @@ impl FailurePointTree {
         depth: usize,
         addr: &[u64],
         length: usize,
-        bug_entry: Option<Bug>,
+        bug_entry: Option<FPTBug>,
     ) -> (usize, FPTraceLink, bool) {
         for child in unsafe { (*root.unwrap().as_ptr()).children.to_vec() } {
             if unsafe { (*child.unwrap().as_ptr()).addr } == addr[0] {
@@ -141,7 +141,7 @@ impl FailurePointTree {
     }
 
     // Return true if the stack has been added to the tree, false if not or if it has been included before
-    pub fn add_bug(&mut self, addr: &[u64], length: usize, bug_entry: Option<Bug>) -> bool {
+    pub fn add_bug(&mut self, addr: &[u64], length: usize, bug_entry: Option<FPTBug>) -> bool {
         if length <= 0 {
             return false;
         }
@@ -174,7 +174,7 @@ impl FailurePointTree {
         parent: FPTraceLink,
         addr: &[u64],
         length: usize,
-        bug_entry: Option<Bug>,
+        bug_entry: Option<FPTBug>,
     ) -> bool {
         if length <= 0 {
             return false;

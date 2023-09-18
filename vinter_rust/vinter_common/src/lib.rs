@@ -29,7 +29,7 @@ pub enum BugType {
     None,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Bug {
     bug_type: BugType,
     checkpoint: isize,
@@ -42,6 +42,21 @@ impl Bug {
             bug_type,
             checkpoint,
             id,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FPTBug {
+    bug_type: BugType,
+    checkpoint: isize,
+}
+
+impl FPTBug {
+    pub fn new(bug_type: BugType, checkpoint: isize) -> FPTBug {
+        FPTBug {
+            bug_type,
+            checkpoint,
         }
     }
 }
