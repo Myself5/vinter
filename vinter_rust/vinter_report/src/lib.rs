@@ -537,17 +537,22 @@ impl TraceAnalyzer {
         kernel_stacktrace: Vec<u64>,
     ) {
         macro_rules! check_store {
-            ($id:expr; $address:expr; $write_end:expr; $group:expr; $bug_type:expr) => {
+            ($group:expr; $bug_type:expr) => {
                 let mut retained_group = $group.clone();
-                retained_group.retain(|&k, _| k >= address && k < $write_end);
+                retained_group.retain(|&k, _| k >= address && k < address + size);
 
                 for (k, v) in retained_group {
-                    if Self::target_store_contains_source_store(k, v.size, address, $write_end)
-                        || Self::source_store_contains_target_store(k, v.size, address, $write_end)
+                    if Self::target_store_contains_source_store(k, v.size, address, address + size)
+                        || Self::source_store_contains_target_store(
+                            k,
+                            v.size,
+                            address,
+                            address + size,
+                        )
                     {
                         self.add_bug(
                             $bug_type,
-                            Vec::from([v.instruction_id, $id]),
+                            Vec::from([v.instruction_id, id]),
                             v.checkpoint_id,
                             v.kernel_stacktrace,
                         );
@@ -558,9 +563,8 @@ impl TraceAnalyzer {
             };
         }
 
-        let write_end = address + size;
-        check_store!(id; address; write_end; self.flushes_pending; BugType::OverwrittenUnflushed);
-        check_store!(id; address; write_end; self.fences_pending; BugType::OverwrittenUnfenced);
+        check_store!(self.flushes_pending; BugType::OverwrittenUnflushed);
+        check_store!(self.fences_pending; BugType::OverwrittenUnfenced);
 
         let mut write = Store::new(size, id, checkpoint_id, kernel_stacktrace);
 
