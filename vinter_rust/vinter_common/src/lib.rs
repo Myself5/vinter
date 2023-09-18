@@ -1,7 +1,5 @@
 use crate::trace::TraceEntry;
 
-use serde::Serialize;
-
 pub mod fptree;
 pub mod trace;
 
@@ -18,7 +16,7 @@ impl Mmss for std::time::Duration {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BugType {
     RedundantFlush,
     RedundantFence,
@@ -31,7 +29,6 @@ pub enum BugType {
     None,
 }
 
-#[derive(Debug, Serialize)]
 pub struct Bug {
     pub bug_type: BugType,
     pub checkpoint: isize,
@@ -48,7 +45,7 @@ impl Bug {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FPTBug {
     bug_type: BugType,
     checkpoint: isize,

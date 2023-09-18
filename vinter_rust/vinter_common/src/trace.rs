@@ -1,5 +1,3 @@
-use serde::Serialize;
-
 use std::io::{BufRead, Read, Write};
 
 use anyhow::{bail, Context, Result};
@@ -7,7 +5,7 @@ use bincode::{Decode, Encode};
 
 const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
-#[derive(Debug, Default, Clone, Encode, Decode, Serialize)]
+#[derive(Debug, Default, Clone, Encode, Decode)]
 pub struct Metadata {
     /// current program counter
     pub pc: u64,
@@ -17,7 +15,7 @@ pub struct Metadata {
     pub kernel_stacktrace: Vec<u64>,
 }
 
-#[derive(Debug, Encode, Decode, Clone, Serialize)]
+#[derive(Debug, Encode, Decode, Clone)]
 pub enum TraceEntry {
     Write {
         id: usize,

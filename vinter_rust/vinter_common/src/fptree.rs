@@ -3,7 +3,6 @@ use std::ptr::NonNull;
 use crate::FPTBug;
 type FPTraceLink = Option<NonNull<FPTraceAddr>>;
 
-#[derive(Debug, Clone)]
 pub struct FPTraceAddr {
     addr: u64,
     visited: bool,

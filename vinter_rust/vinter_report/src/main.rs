@@ -64,7 +64,7 @@ enum Commands {
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 struct TAJSONData {
     ta_bugs: usize,
     ta_entries: usize,
@@ -97,7 +97,8 @@ fn main() -> Result<()> {
             if !json {
                 println!("Analyzing Trace...");
             }
-            let (ta_bugs, ta_entries) = ta.analyze_trace(trace, vmlinux, output_dir.clone(), verbose)?;
+            let (ta_bugs, ta_entries) =
+                ta.analyze_trace(trace, vmlinux, output_dir.clone(), verbose)?;
 
             let ta_data = TAJSONData {
                 ta_bugs,
