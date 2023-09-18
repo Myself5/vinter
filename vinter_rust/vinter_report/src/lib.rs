@@ -149,7 +149,7 @@ pub struct TraceAnalyzer {
     bugs: Vec<Bug>,
     flushes: usize,
     implicit_flushes: usize,
-    unordered_flushes: usize,
+    unordered_flushes: Vec<usize>,
     timing_start_trace_analysis: Instant,
     timing_end_trace_analysis: Instant,
     failure_point_tree: FailurePointTree,
@@ -165,7 +165,7 @@ impl TraceAnalyzer {
             bugs: Vec::new(),
             flushes: 0,
             implicit_flushes: 0,
-            unordered_flushes: 0,
+            unordered_flushes: Vec::new(),
             timing_start_trace_analysis: Instant::now(),
             timing_end_trace_analysis: Instant::now(),
             failure_point_tree,
@@ -469,7 +469,7 @@ impl TraceAnalyzer {
         kernel_stacktrace: Vec<u64>,
     ) {
         macro_rules! check_store {
-            ($address:expr; $write_end:expr; $group:expr; $bug_type:expr) => {
+            ($id:expr; $address:expr; $write_end:expr; $group:expr; $bug_type:expr) => {
                 let mut retained_group = $group.clone();
                 retained_group.retain(|&k, _| k >= address && k < $write_end);
 
@@ -479,7 +479,7 @@ impl TraceAnalyzer {
                     {
                         self.add_bug(
                             $bug_type,
-                            v.instruction_id,
+                            Vec::from([v.instruction_id, $id]),
                             v.checkpoint_id,
                             v.kernel_stacktrace,
                         );
@@ -491,8 +491,8 @@ impl TraceAnalyzer {
         }
 
         let write_end = address + size;
-        check_store!(address; write_end; self.flushes_pending; BugType::OverwrittenUnflushed);
-        check_store!(address; write_end; self.fences_pending; BugType::OverwrittenUnfenced);
+        check_store!(id; address; write_end; self.flushes_pending; BugType::OverwrittenUnflushed);
+        check_store!(id; address; write_end; self.fences_pending; BugType::OverwrittenUnfenced);
 
         let mut write = Store::new(size, id, checkpoint_id, kernel_stacktrace);
 
@@ -513,21 +513,22 @@ impl TraceAnalyzer {
         if self.fences_pending.len() == 0 {
             self.add_bug(
                 BugType::RedundantFence,
-                id,
+                Vec::from([id]),
                 checkpoint_id,
                 kernel_stacktrace.clone(),
             );
         }
         self.fences_pending.clear();
-        if self.unordered_flushes > 1 {
+        if self.unordered_flushes.len() > 1 {
+            self.unordered_flushes.push(id);
             self.add_bug(
                 BugType::UnorderedFlushes,
-                id,
+                self.unordered_flushes.clone(),
                 checkpoint_id,
                 kernel_stacktrace,
             );
         }
-        self.unordered_flushes = 0;
+        self.unordered_flushes.clear();
     }
 
     fn process_trace_entry_flush(
@@ -572,13 +573,13 @@ impl TraceAnalyzer {
 
         if flushed_stores > 0 {
             match mnemonic.as_ref() {
-                "clflushopt" | "clwb" => self.unordered_flushes += 1,
+                "clflushopt" | "clwb" => self.unordered_flushes.push(id),
                 _ => (),
             }
         } else {
             self.add_bug(
                 BugType::RedundantFlush,
-                id,
+                Vec::from([id]),
                 checkpoint_id,
                 kernel_stacktrace,
             );
@@ -589,7 +590,7 @@ impl TraceAnalyzer {
         for (_, store) in self.flushes_pending.clone() {
             self.add_bug(
                 BugType::MissingFlush,
-                store.instruction_id,
+                Vec::from([store.instruction_id]),
                 store.checkpoint_id,
                 store.kernel_stacktrace,
             );
@@ -597,7 +598,7 @@ impl TraceAnalyzer {
         for (_, store) in self.fences_pending.clone() {
             self.add_bug(
                 BugType::MissingFence,
-                store.instruction_id,
+                Vec::from([store.instruction_id]),
                 store.checkpoint_id,
                 store.kernel_stacktrace,
             );
@@ -614,7 +615,7 @@ impl TraceAnalyzer {
     fn add_bug(
         &mut self,
         bug_type: BugType,
-        id: usize,
+        id: Vec<usize>,
         checkpoint_id: isize,
         kernel_stacktrace: Vec<u64>,
     ) {

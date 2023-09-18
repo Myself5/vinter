@@ -33,15 +33,15 @@ pub enum BugType {
 pub struct Bug {
     bug_type: BugType,
     checkpoint: isize,
-    id: usize,
+    trace_ids: Vec<usize>,
 }
 
 impl Bug {
-    pub fn new(bug_type: BugType, checkpoint: isize, id: usize) -> Bug {
+    pub fn new(bug_type: BugType, checkpoint: isize, trace_ids: Vec<usize>) -> Bug {
         Bug {
             bug_type,
             checkpoint,
-            id,
+            trace_ids,
         }
     }
 }
