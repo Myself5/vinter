@@ -1,7 +1,8 @@
 use anyhow::{bail, Context, Result};
+use std::fmt::Write;
+use std::fs::File;
 use std::io::{BufReader, Read};
-use std::path::Path;
-use std::{fs::File, path::PathBuf};
+use std::path::{Path, PathBuf};
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -47,58 +48,61 @@ pub fn init_addr2line(vmlinux: &Path) -> Result<addr2line::ObjectContext> {
     Ok(addr2line::Context::new(&parsed)?)
 }
 
-pub fn print_frame(a2l: &addr2line::ObjectContext, addr: u64) {
-    print!("0x{:x} ", addr);
+pub fn print_frame(a2l: &addr2line::ObjectContext, addr: u64) -> String {
+    let mut output = String::new();
+    write!(output, "0x{:x} ", addr).unwrap();
     match a2l.find_frames(addr) {
         Ok(mut iter) => match iter.next() {
             Ok(Some(frame)) => {
                 if let Some(function) = frame.function {
-                    print!("{}", function.demangle().unwrap());
+                    write!(output, "{}", function.demangle().unwrap()).unwrap();
                 } else {
-                    print!("??");
+                    write!(output, "??").unwrap();
                 }
             }
             Ok(None) => {
-                print!("??");
+                write!(output, "??").unwrap();
             }
             Err(err) => {
-                print!("<frame error: {}>", err);
+                write!(output, "<frame error: {}>", err).unwrap();
             }
         },
         Err(err) => {
-            print!("<frame error: {}>", err);
+            write!(output, "<frame error: {}>", err).unwrap();
         }
     }
-    print!(" at ");
+    write!(output, " at ").unwrap();
     match a2l.find_location(addr) {
         Ok(Some(loc)) => {
-            println!(
-                "{file}:{line}:{column}",
+            write!(
+                output,
+                "{file}:{line}:{column}\n",
                 file = loc.file.unwrap_or("?"),
                 line = loc.line.unwrap_or(0),
                 column = loc.column.unwrap_or(0)
-            );
+            )
+            .unwrap();
         }
         Ok(None) => {
-            println!("?");
+            write!(output, "?\n").unwrap();
         }
         Err(err) => {
-            println!("<location error: {}>", err);
+            write!(output, "<location error: {}>\n", err).unwrap();
         }
     }
+
+    output
 }
 
-macro_rules! print_kernel_stracktrace {
-    ($metadata:expr; $a2l:expr) => {
+macro_rules! get_kernel_stracktrace {
+    ($metadata:expr; $a2l:expr; $output:expr) => {
         if let Some(a2l) = &$a2l {
             if $metadata.in_kernel {
-                print!("\tpc: ");
-                print_frame(a2l, $metadata.pc);
+                write!($output, "\tpc: {}", print_frame(a2l, $metadata.pc)).unwrap();
                 if !$metadata.kernel_stacktrace.is_empty() {
-                    println!("\tstack trace:");
+                    write!($output, "\tstack trace:\n").unwrap();
                     for (i, addr) in $metadata.kernel_stacktrace.iter().enumerate() {
-                        print!("\t#{}: ", i + 1);
-                        print_frame(a2l, *addr);
+                        write!($output, "\t#{}: {}", i + 1, print_frame(a2l, *addr)).unwrap();
                     }
                 }
             }
@@ -245,21 +249,27 @@ impl TraceAnalyzer {
                     if trace_filter.write {
                         println!("{:?}", entry);
 
-                        print_kernel_stracktrace!(metadata; a2l);
+                        let mut stacktrace = String::new();
+                        get_kernel_stracktrace!(metadata; a2l; stacktrace);
+                        print!("{}", stacktrace);
                     }
                 }
                 TraceEntry::Fence { metadata, .. } => {
                     if trace_filter.fence {
                         println!("{:?}", entry);
 
-                        print_kernel_stracktrace!(metadata; a2l);
+                        let mut stacktrace = String::new();
+                        get_kernel_stracktrace!(metadata; a2l; stacktrace);
+                        print!("{}", stacktrace);
                     }
                 }
                 TraceEntry::Flush { metadata, .. } => {
                     if trace_filter.flush {
-                        println!("{:?}", entry);
+                        print!("{:?}", entry);
 
-                        print_kernel_stracktrace!(metadata; a2l);
+                        let mut stacktrace = String::new();
+                        get_kernel_stracktrace!(metadata; a2l; stacktrace);
+                        print!("{}", stacktrace);
                     }
                 }
                 TraceEntry::Read { .. } => {
