@@ -29,7 +29,7 @@ pub enum BugType {
     None,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Bug {
     bug_type: BugType,
     checkpoint: isize,

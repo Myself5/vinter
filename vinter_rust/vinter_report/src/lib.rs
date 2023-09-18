@@ -607,10 +607,6 @@ impl TraceAnalyzer {
         self.fences_pending.clear();
     }
 
-    pub fn get_bugs(&self) -> Vec<Bug> {
-        self.bugs.clone()
-    }
-
     // Use the Failure Point tree to deduplicate bugs
     fn add_bug(
         &mut self,
