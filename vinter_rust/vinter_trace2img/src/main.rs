@@ -143,7 +143,19 @@ fn main() -> Result<()> {
                 .to_str()
                 .unwrap()
                 .to_string();
-            let tech_config = gen_config.to_string();
+            let mut tech_config = gen_config.to_string();
+            if kernel_stacktrace {
+                if let CrashImageGenerator::FailurePointTree = gen_config {
+                    // With FPT, we always collect the kernel stacktrace in the trace, show warning
+                    if !json {
+                        println!(
+                            "The FPT heuristic always collects a kernel stacktrace. Ignoring flag."
+                        );
+                    }
+                } else {
+                    tech_config.push_str("+ST");
+                }
+            }
 
             let mut gen = GenericCrashImageGenerator::new(
                 vm_config,
