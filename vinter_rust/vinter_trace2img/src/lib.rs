@@ -106,7 +106,7 @@ impl std::fmt::Display for CrashImageGenerator {
         match self {
             CrashImageGenerator::None => write!(f, "None"),
             CrashImageGenerator::Heuristic => write!(f, "Default"),
-            CrashImageGenerator::FailurePointTree => write!(f, "FPT"),
+            CrashImageGenerator::FailurePointTree => write!(f, "FPT-SKIP"),
         }
     }
 }
@@ -527,15 +527,8 @@ impl GenericCrashImageGenerator {
 
         if let CrashImageGenerator::FailurePointTree = self.generator_config {
             match callstack_option {
-                Some(callstack) => {
-                    // give the stack a common root (0)
-                    let zero_vec = FailurePointTree::get_zero_vec(callstack);
-                    if !self.failure_point_tree.add(&zero_vec, zero_vec.len()) {
-                        // This specific callstack is already included, skip
-                        return Ok(());
-                    }
-                }
-                _ => (), // "Hypercalls" provide a "None" callstack, always insert them
+                // This is a test scenario to check the FPT Efficiency. Always insert CrashImages
+                _ => (),
             }
         }
 
