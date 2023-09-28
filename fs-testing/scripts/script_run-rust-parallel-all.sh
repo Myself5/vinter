@@ -4,7 +4,7 @@ set -eu -o pipefail
 script=$0
 scriptdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 base=$scriptdir/../..
-results=results/run_rust_parellel_all
+results=results/run_rust_parallel_all
 
 rm -rf "$results"
 mkdir -p "$results"
@@ -17,7 +17,7 @@ usage() {
 	echo " -g (n)one, (d)efault, (f)pt: Specify the used heuristic generator"
 	echo " -(j)son: Create a JSON output instead of the default, human readable text"
 	echo " -(v)erbose: Show verbose duration timings (always included in json)"
-	echo " --st: Always include kernel_stacktrace in trace"
+	echo " -(k)ernel-stacktrace: Always include kernel stacktrace in trace"
 }
 
 parallel=1
