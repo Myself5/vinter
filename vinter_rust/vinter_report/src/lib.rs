@@ -518,7 +518,6 @@ impl TraceAnalyzer {
         if let Some(output_dir) = output_dir {
             let mut ta_bugs_file = File::create(output_dir.join("ta_bugs.yaml"))?;
             ta_bugs_file.write_all(formatted_output_string.as_bytes())?;
-            print!("{}", formatted_output_string);
         } else {
             print!("{}", formatted_output_string);
         }
