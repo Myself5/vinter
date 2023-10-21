@@ -280,7 +280,7 @@ impl TraceAnalyzer {
                 }
                 TraceEntry::Flush { metadata, .. } => {
                     if trace_filter.flush {
-                        print!("{:?}", entry);
+                        println!("{:?}", entry);
 
                         let mut stacktrace = String::new();
                         get_kernel_stracktrace!(metadata; a2l; stacktrace; "\t");
