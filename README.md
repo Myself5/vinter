@@ -17,6 +17,7 @@ Short overview over the main components of Vinter:
   * `report-results.py`: Script for analyzing output from the testing pipeline.
 * `vinter_rust/`: A reimplementation of Vinter in Rust, with the intention of
   improved performance and to provide a clean base for future extensions.
+  * `vinter_report/`: The "Trace Analyzer" and "Trace Reader" components
   * `vinter_trace/`: The "Tracer" component of Vinter.
   * `vinter_trace2img/`: The "Crash Image Generator" and "Tester" components
     of Vinter. Runs the full testing pipeline.
@@ -64,46 +65,11 @@ apt-get install bc -y --force-yes &&
 /mnt/build-kernel.sh pmfs'
 ```
 
+If the Kernels are cloned to the directories mentioned above `./build-all.sh` can be used to run all build steps.
+
 ## Artifact Evaluation
 
 Information for artifact evaluation is in `artifact-evaluation/README.md`.
-
-## Crash Image Generation and Comparison
-
-Start the virtual machine in a suitable hypervisor. Vinter can optionally run
-its analysis in parallel, so make sure to provide plenty of memory (`-m`) and
-vCPUs (`-smp`). As a rough guideline, provide 2 GB of memory per vCPU. For
-example with QEMU/KVM:
-```
-  qemu-system-x86_64 -m 64G -smp 32 -display none -accel kvm -serial mon:stdio \
-  -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::2222-:22 vinter.qcow2
-```
-
-Connect to the virtual machine via SSH. The password for the users vinter and
-root is "vinter". Note that the SSH server does not allow direct login as root,
-use `su` instead. It is also possible to interact with the VM via the serial
-console, but we strongly recommend SSH to avoid glitches.
-```
-ssh -p 2222 vinter@localhost
-```
-
-Inside the VM, you can find Vinter in `/home/vinter/vinter`. To verify that
-Vinter is set up correctly, we provide a script that runs Vinter (both Python
-and Rust versions) with one test case on each kernel. This will take around
-five minutes to complete.
-```
-cd ~/vinter
-fs-testing/scripts/run_rust_test.sh
-```
-
-The script will put results into the directory `results/rust-test`. View
-a short summary of these results with the following commands:
-```
-vinter_python/report-results.py analyze \
-    results/rust-test/vinter_rust_legacy/vm_nova/test_hello-world
-vinter_python/report-results.py analyze \
-    results/rust-test/vinter_rust_legacy/vm_pmfs/test_hello-world
-```
 
 ## License
 
