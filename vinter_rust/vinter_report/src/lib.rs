@@ -501,7 +501,7 @@ impl TraceAnalyzer {
                         get_kernel_stracktrace!(metadata; a2l; stacktrace; "      ");
 
                         if !stacktrace.is_empty() {
-                            writeln!(formatted_output_string, "    Kernel Stacktrace:").unwrap();
+                            writeln!(formatted_output_string, "    Kernel Symbols:").unwrap();
                             write!(formatted_output_string, "{}", stacktrace).unwrap();
                         }
                     }
