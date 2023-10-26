@@ -24,7 +24,7 @@ pub enum BugType {
     MissingFence,
     OverwrittenUnflushed,
     OverwrittenUnfenced,
-    ImplicitFlush,
+    // ImplicitFlush, // Unused, but included in the Mumak design
     UnorderedFlushes,
     None,
 }

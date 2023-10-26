@@ -164,8 +164,6 @@ pub struct TraceAnalyzer {
     fences_pending: HashMap<usize, Store>,
     flushes_pending: HashMap<usize, Store>,
     bugs: Vec<Bug>,
-    flushes: usize,
-    implicit_flushes: usize,
     unordered_flushes: Vec<usize>,
     timing_start_trace_analysis: Instant,
     timing_end_trace_analysis: Instant,
@@ -181,8 +179,6 @@ impl TraceAnalyzer {
             fences_pending: HashMap::new(),
             flushes_pending: HashMap::new(),
             bugs: Vec::new(),
-            flushes: 0,
-            implicit_flushes: 0,
             unordered_flushes: Vec::new(),
             timing_start_trace_analysis: Instant::now(),
             timing_end_trace_analysis: Instant::now(),
@@ -638,9 +634,6 @@ impl TraceAnalyzer {
                 }
             }
         }
-
-        self.flushes += 1;
-        self.implicit_flushes += flushed_stores;
 
         if flushed_stores > 0 {
             match mnemonic.as_ref() {
