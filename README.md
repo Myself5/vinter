@@ -17,6 +17,7 @@ Short overview over the main components of Vinter:
   * `report-results.py`: Script for analyzing output from the testing pipeline.
 * `vinter_rust/`: A reimplementation of Vinter in Rust, with the intention of
   improved performance and to provide a clean base for future extensions.
+  * `vinter_common/`: Shared library, contains, among other things, the Failure Point Tree, and its example that can be executed with `cargo run --example fptree`.
   * `vinter_report/`: The "Trace Analyzer" and "Trace Reader" components
   * `vinter_trace/`: The "Tracer" component of Vinter.
   * `vinter_trace2img/`: The "Crash Image Generator" and "Tester" components
