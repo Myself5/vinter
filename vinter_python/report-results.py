@@ -94,8 +94,7 @@ def analyze(dir: Path, diff=False, verbose=False):
                 if checkpoint_first_fence[id][0] == crash['fence_id']:
                     checkpoint_first_fence[id][1].add(name)
                     # If the heuristic was performed on this image, we need to find the resulting additional images.
-                    if 'HeuristicApplied' in images[image_name]['heuristic'] and \
-                       'FullyPersisted' in crash['persistence_type']:
+                    if 'FullyPersisted' in crash['persistence_type']:
                         checkpoint_first_fence[id][2].add(image_name)
 
     # For each image created at a checkpoint, add all relevant states found via the heuristic.
@@ -110,11 +109,12 @@ def analyze(dir: Path, diff=False, verbose=False):
                 if 'FullyPersisted' in crash['persistence_type']:
                     heuristic_fences.add(crash['fence_id'])
             item[3].update(dirty_lines)
-            for heuristic_image_name in images[image_name]['heuristic']['HeuristicApplied']['heuristic_images']:
-                for crash in images[heuristic_image_name]['originating_crashes']:
-                    if crash['fence_id'] in heuristic_fences and 'StrictSubsetPersisted' in crash['persistence_type']:
-                        if set(crash['persistence_type']['StrictSubsetPersisted']['dirty_lines']).issubset(dirty_lines):
-                            additional_images.add(heuristic_image_name)
+            if 'HeuristicApplied' in images[image_name]['heuristic']:
+                for heuristic_image_name in images[image_name]['heuristic']['HeuristicApplied']['heuristic_images']:
+                    for crash in images[heuristic_image_name]['originating_crashes']:
+                        if crash['fence_id'] in heuristic_fences and 'StrictSubsetPersisted' in crash['persistence_type']:
+                            if set(crash['persistence_type']['StrictSubsetPersisted']['dirty_lines']).issubset(dirty_lines):
+                                additional_images.add(heuristic_image_name)
         for name, state in states.items():
             if name in item[1]:
                 continue
