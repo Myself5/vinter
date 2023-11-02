@@ -681,17 +681,12 @@ impl TraceAnalyzer {
     ) {
         let fpt_bug = FPTBug::new(bug_type.clone(), checkpoint_id);
         let zero_vec = FailurePointTree::get_zero_vec(kernel_stacktrace);
-        if self
-            .failure_point_tree
-            .add_bug(&zero_vec, zero_vec.len(), Some(fpt_bug))
-        {
-            let mut trace_entries = Vec::new();
-            for id in ids {
-                trace_entries.push(self.trace_entries.get(&id).unwrap().clone());
-            }
-            self.bugs
-                .push(Bug::new(bug_type, checkpoint_id, trace_entries));
+        let mut trace_entries = Vec::new();
+        for id in ids {
+            trace_entries.push(self.trace_entries.get(&id).unwrap().clone());
         }
+        self.bugs
+            .push(Bug::new(bug_type, checkpoint_id, trace_entries));
     }
 
     pub fn get_timing_start_trace_analysis(&self) -> Instant {
