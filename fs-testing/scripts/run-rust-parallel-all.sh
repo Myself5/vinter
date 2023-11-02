@@ -4,7 +4,7 @@ set -eu -o pipefail
 script=$0
 scriptdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 base=$scriptdir/../..
-results=results/run_rust_parallel_all
+results=results/run-rust-parallel-all
 
 rm -rf "$results"
 mkdir -p "$results"

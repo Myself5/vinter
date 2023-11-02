@@ -5,7 +5,7 @@ script=$0
 scriptdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 base=$scriptdir/../..
 fs_dir=$scriptdir/..
-results=results/run_rust_parallel_all
+results=results/run-rust-parallel-all
 
 rm -f $results/rust_parallel_ta_results.json
 vms=("vm_pmfs" "vm_nova" "vm_nova-protection")
