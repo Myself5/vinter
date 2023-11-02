@@ -9,11 +9,7 @@ This is the source code of Vinter, a tool for automated NVM crash consistency te
 
 Short overview over the main components of Vinter:
 
-* `vinter_python/`: The original implementation of Vinter that was used for the
-  analysis in the paper.
-  * `pmemtrace.py`: The "Tracer" component of Vinter.
-  * `trace2img.py`: The "Crash Image Generator" and "Tester" components of Vinter.
-  * `trace-and-analyze.sh`: Main script for running the full testing pipeline.
+* `vinter_python/`: Remains of the original implementation of Vinter, only contains remaining result analyzer.
   * `report-results.py`: Script for analyzing output from the testing pipeline.
 * `vinter_rust/`: A reimplementation of Vinter in Rust, with the intention of
   improved performance and to provide a clean base for future extensions.

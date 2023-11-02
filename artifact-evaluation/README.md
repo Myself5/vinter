@@ -24,46 +24,28 @@ console, but we strongly recommend SSH to avoid glitches.
 ssh -p 2222 vinter@localhost
 ```
 
-Inside the VM, you can find Vinter in `/home/vinter/vinter`. To verify that
-Vinter is set up correctly, we provide a script that runs Vinter (both Python
-and Rust versions) with one test case on each kernel. This will take around
-five minutes to complete.
+Inside the VM, you can find Vinter in `/home/vinter/vinter`. Before you can start,
+it is required to pull the changes from this repo.
+
 ```
 cd ~/vinter
-fs-testing/scripts/run_getting-started.sh
+git pull https://github.com/Myself5/vinter -b thesis
 ```
 
-The script will put results into the directory `results/getting-started`. View
+To verify that Vinter is set up correctly, we provide a script that runs Vinter
+with one test case on each kernel. This will take around a minute to complete.
+```
+fs-testing/scripts/run-rust-single-test.sh
+```
+
+The script will put results into the directory `results/rust-single-test`. View
 a short summary of these results with the following commands:
 ```
 vinter_python/report-results.py analyze \
-    results/getting-started/vinter_python/vm_nova/getting-started/test_hello-world
+    results/rust-single-test/vm_nova/test_hello-world
 vinter_python/report-results.py analyze \
-    results/getting-started/vinter_python/vm_pmfs/getting-started/test_hello-world
+    results/rust-single-test/vm_pmfs/test_hello-world
 ```
 
 You can see that Vinter reports a violation of *single final state* for the
 test on NOVA, but not on PMFS.
-
-Note that the remainder of our artifact evaluation walkthrough focuses on the
-original `vinter_python` implementation that was used for the analysis in the
-paper.
-
-## Detailed Instructions
-
-We organize our detailed walkthrough in multiple separate files for each major
-claim. We claim the following:
-
-* Vinter can find new bugs in file systems and can help developers with finding
-  the root cause. In `walkthrough_bugs.md`, we provide instructions for
-  reproducing Figures 4-6 as well as Section 5.3 of our paper.
-* Vinter can reproduce previously fixed bugs in NOVA. In
-  `walkthrough_completeness.md`, we provide instructions for reproducing
-  Section 6.1 of our paper.
-* Vinter's heuristic is effective at reducing the number of generated crash
-  images without missing semantic states. In
-  `walkthrough_heuristic-effectiveness.md`, we provide instructions for
-  reproducing Section 6.2 of our paper.
-* Vinter is sufficiently fast for analyzing file systems. In
-  `walkthrough_performance-benchmarks.md`, we provide instructions for
-  reproducing Figures 8 and 9 of our paper.
